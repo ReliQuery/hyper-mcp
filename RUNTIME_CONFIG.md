@@ -8,6 +8,7 @@ The configuration is structured as follows:
 - **plugins**: A map of plugin names to  plugin configuration objects.
   - **path** (`string`): OCI path or HTTP URL or local path for the plugin.
   - **runtime_config** (`object`, optional): Plugin-specific runtime configuration. The available fields are:
+    - **cross_plugin_tools** (`array[string]`, optional): List of tool names from this plugin that should be made available for cross-plugin calls. Only tools listed here can be invoked by other plugins.
     - **skip_tools** (`array[string]`, optional): List of tool names to skip loading at runtime.
     - **allowed_hosts** (`array[string]`, optional): List of allowed hosts for the plugin (e.g., `["1.1.1.1"]` or `["*"]`).
     - **allowed_paths** (`array[string]`, optional): List of allowed file system paths.
@@ -316,6 +317,10 @@ auths:
 plugins:
   time:
     url: oci://ghcr.io/tuananh/time-plugin:latest
+    runtime_config:
+      cross_plugin_tools:
+        - "get_time"
+        - "format_timestamp"
   myip:
     url: oci://ghcr.io/tuananh/myip-plugin:latest
     runtime_config:
@@ -329,6 +334,9 @@ plugins:
   private_plugin:
     url: "https://private.registry.io/my-plugin"
     runtime_config:
+      cross_plugin_tools:
+        - "shared_utility"
+        - "common_validator"
       allowed_hosts:
         - "private.registry.io"
 ```
@@ -355,7 +363,10 @@ plugins:
   },
   "plugins": {
     "time": {
-      "url": "oci://ghcr.io/tuananh/time-plugin:latest"
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest",
+      "runtime_config": {
+        "cross_plugin_tools": ["get_time", "format_timestamp"]
+      }
     },
     "myip": {
       "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
@@ -369,6 +380,7 @@ plugins:
     "private_plugin": {
       "url": "https://private.registry.io/my-plugin",
       "runtime_config": {
+        "cross_plugin_tools": ["shared_utility", "common_validator"],
         "allowed_hosts": ["private.registry.io"]
       }
     }
@@ -470,6 +482,55 @@ This error occurs when the stored password isn't valid JSON or doesn't match the
    chmod 600 config.yaml
    ```
 
+## Cross-Plugin Tool Sharing
+
+The `cross_plugin_tools` configuration enables plugins to expose specific tools for use by other plugins. This feature allows you to:
+
+- **Reduce duplication**: Share common functionality across multiple plugins
+- **Create specialized utility plugins**: Build plugins that provide shared services like authentication, logging, or data validation
+- **Enable plugin composition**: Allow plugins to build upon each other's capabilities
+
+### How It Works
+
+1. **Tool Exposure**: A plugin must explicitly list tools in `cross_plugin_tools` to make them available to other plugins
+2. **Security**: Only tools explicitly listed can be called by other plugins, maintaining security boundaries
+3. **Runtime Validation**: The runtime enforces that only allowed tools can be invoked in cross-plugin calls
+
+### Example Use Cases
+
+**Utility Plugin Pattern:**
+```yaml
+plugins:
+  utilities:
+    url: oci://example.com/utility-plugin:latest
+    runtime_config:
+      cross_plugin_tools:
+        - "http_client"
+        - "json_validator" 
+        - "logger"
+  
+  business-logic:
+    url: oci://example.com/business-plugin:latest
+    # This plugin can now call utilities' exposed tools
+```
+
+**Authentication Service Pattern:**
+```yaml
+plugins:
+  auth-service:
+    url: oci://example.com/auth-plugin:latest
+    runtime_config:
+      cross_plugin_tools:
+        - "authenticate_user"
+        - "validate_token"
+      allowed_hosts:
+        - "auth.company.com"
+  
+  api-plugin:
+    url: oci://example.com/api-plugin:latest
+    # This plugin can call auth-service tools for authentication
+```
+
 ## Notes
 
 - Fields marked as `optional` can be omitted.
@@ -477,3 +538,5 @@ This error occurs when the stored password isn't valid JSON or doesn't match the
 - Authentication applies to all HTTPS requests made by plugins, including plugin downloads and runtime API calls.
 - URL matching is case-sensitive and based on string prefix matching.
 - Keyring authentication requires platform-specific keyring services to be available and accessible.
+- Tools not listed in `cross_plugin_tools` remain private to their plugin and cannot be accessed by other plugins.
+- Cross-plugin tool calls are subject to the same security constraints as regular tool calls (allowed_hosts, memory_limit, etc.).

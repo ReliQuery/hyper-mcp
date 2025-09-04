@@ -75,11 +75,14 @@ Built with security-first mindset:
       "runtime_config": {
         "allowed_hosts": ["*"],
         "memory_limit": "100 MB",
+        "cross_plugin_tools": ["http-client", "url-validator"]
       }
     }
   }
 }
 ```
+
+The `cross_plugin_tools` option allows plugins to expose specific tools for use by other plugins, enabling tool sharing and reducing duplication across your plugin ecosystem.
 
 > 📖 **For detailed configuration options including authentication setup, runtime configuration, and advanced features, see [RUNTIME_CONFIG.md](./RUNTIME_CONFIG.md)**
 
