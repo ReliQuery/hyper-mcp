@@ -1,0 +1,44 @@
+{
+  "plugins": {
+    "time": {
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest",
+      "runtime_config": {
+        "cross_plugin_tools": ["time"],
+        "memory_limit": "128MB"
+      }
+    },
+    "wrapper": {
+      "url": "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm",
+      "runtime_config": {
+        "memory_limit": "64MB"
+      }
+    },
+    "time-service": {
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest",
+      "runtime_config": {
+        "cross_plugin_tools": ["time"],
+        "allowed_hosts": ["*"],
+        "env_vars": {
+          "TIMEZONE": "UTC"
+        },
+        "memory_limit": "256MB"
+      }
+    },
+    "private-time": {
+      "url": "oci://ghcr.io/tuananh/time-plugin:latest",
+      "runtime_config": {
+        "skip_tools": ["parse_time"],
+        "memory_limit": "128MB"
+      }
+    },
+    "wrapper-secondary": {
+      "url": "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm",
+      "runtime_config": {
+        "memory_limit": "64MB",
+        "env_vars": {
+          "WRAPPER_MODE": "secondary"
+        }
+      }
+    }
+  }
+}

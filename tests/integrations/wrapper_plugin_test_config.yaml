@@ -1,0 +1,46 @@
+# Test configuration for wrapper plugin demonstrating cross_plugin_tools functionality
+plugins:
+  # Time plugin that exposes tools for cross-plugin calls
+  time:
+    url: "oci://ghcr.io/tuananh/time-plugin:latest"
+    runtime_config:
+      cross_plugin_tools:
+        - "time" # Expose the time tool for cross-plugin calls
+      memory_limit: "128MB"
+
+  # Wrapper plugin that calls tools from other plugins
+  wrapper:
+    url: "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm"
+    runtime_config:
+      memory_limit: "64MB"
+      # This plugin doesn't expose any tools for cross-plugin calls
+      # but can call tools from other plugins that have exposed them
+
+  # Additional time plugin with a different name for testing multiple instances
+  time-service:
+    url: "oci://ghcr.io/tuananh/time-plugin:latest"
+    runtime_config:
+      cross_plugin_tools:
+        - "time"
+      allowed_hosts:
+        - "*"
+      env_vars:
+        TIMEZONE: "UTC"
+      memory_limit: "256MB"
+
+  # Plugin that doesn't expose any cross-plugin tools (for negative testing)
+  private-time:
+    url: "oci://ghcr.io/tuananh/time-plugin:latest"
+    runtime_config:
+      # No cross_plugin_tools - this plugin's tools are private
+      skip_tools:
+        - "parse_time" # Skip one tool to test selective loading
+      memory_limit: "128MB"
+
+  # Another wrapper plugin instance for testing multiple wrappers
+  wrapper-secondary:
+    url: "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm"
+    runtime_config:
+      memory_limit: "64MB"
+      env_vars:
+        WRAPPER_MODE: "secondary"

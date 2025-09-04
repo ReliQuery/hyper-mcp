@@ -19,6 +19,17 @@ exports:
     output:
       $ref: "#/components/schemas/ListToolsResult"
       contentType: application/json
+imports:
+  call_tool:
+    description: >
+      Invoke the given tool method with parameters.
+      Returns a CallToolResult containing the tool output (or error).
+    input:
+      $ref: "#/components/schemas/CallToolRequest"
+      contentType: application/json
+    output:
+      $ref: "#/components/schemas/CallToolResult"
+      contentType: application/json
 components:
   schemas:
     BlobResourceContents:

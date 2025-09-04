@@ -2468,6 +2468,110 @@ plugins:
     }
 
     #[test]
+    fn test_load_wrapper_plugin_test_config() {
+        let rt = Runtime::new().unwrap();
+        let path = Path::new("tests/integrations/wrapper_plugin_test_config.yaml");
+
+        let config_result = rt.block_on(load_config(&path));
+        assert!(
+            config_result.is_ok(),
+            "Failed to load wrapper plugin test config: {:?}",
+            config_result.err()
+        );
+
+        let config = config_result.unwrap();
+        assert_eq!(
+            config.plugins.len(),
+            5,
+            "Expected 5 plugins in wrapper test config"
+        );
+
+        // Test time plugin with cross_plugin_tools
+        let time_plugin = &config.plugins[&PluginName("time".to_string())];
+        let time_runtime = time_plugin.runtime_config.as_ref().unwrap();
+        let time_cross_tools = time_runtime.cross_plugin_tools.as_ref().unwrap();
+        assert_eq!(time_cross_tools.len(), 1);
+        assert_eq!(time_cross_tools[0], "time");
+        assert_eq!(time_runtime.memory_limit.as_ref().unwrap(), "128MB");
+
+        // Test wrapper plugin (should have no cross_plugin_tools)
+        let wrapper_plugin = &config.plugins[&PluginName("wrapper".to_string())];
+        let wrapper_runtime = wrapper_plugin.runtime_config.as_ref().unwrap();
+        assert!(wrapper_runtime.cross_plugin_tools.is_none());
+        assert_eq!(wrapper_runtime.memory_limit.as_ref().unwrap(), "64MB");
+        assert!(
+            wrapper_plugin
+                .url
+                .to_string()
+                .contains("wrapper_plugin.wasm")
+        );
+
+        // Test time-service plugin with cross_plugin_tools and additional config
+        let time_service_plugin = &config.plugins[&PluginName("time-service".to_string())];
+        let time_service_runtime = time_service_plugin.runtime_config.as_ref().unwrap();
+        let time_service_cross_tools = time_service_runtime.cross_plugin_tools.as_ref().unwrap();
+        assert_eq!(time_service_cross_tools.len(), 1);
+        assert_eq!(time_service_cross_tools[0], "time");
+        assert!(time_service_runtime.allowed_hosts.is_some());
+        assert!(time_service_runtime.env_vars.is_some());
+
+        // Test private-time plugin (no cross_plugin_tools)
+        let private_time_plugin = &config.plugins[&PluginName("private-time".to_string())];
+        let private_time_runtime = private_time_plugin.runtime_config.as_ref().unwrap();
+        assert!(private_time_runtime.cross_plugin_tools.is_none());
+        assert!(private_time_runtime.skip_tools.is_some());
+        let skip_tools = private_time_runtime.skip_tools.as_ref().unwrap();
+        assert_eq!(skip_tools.len(), 1);
+        assert_eq!(skip_tools[0], "parse_time");
+
+        // Test wrapper-secondary plugin
+        let wrapper_secondary = &config.plugins[&PluginName("wrapper-secondary".to_string())];
+        let wrapper_secondary_runtime = wrapper_secondary.runtime_config.as_ref().unwrap();
+        assert!(wrapper_secondary_runtime.cross_plugin_tools.is_none());
+        assert!(wrapper_secondary_runtime.env_vars.is_some());
+        let env_vars = wrapper_secondary_runtime.env_vars.as_ref().unwrap();
+        assert_eq!(env_vars.get("WRAPPER_MODE").unwrap(), "secondary");
+    }
+
+    #[test]
+    fn test_load_wrapper_plugin_test_config_json() {
+        let rt = Runtime::new().unwrap();
+        let path = Path::new("tests/integrations/wrapper_plugin_test_config.json");
+
+        let config_result = rt.block_on(load_config(&path));
+        assert!(
+            config_result.is_ok(),
+            "Failed to load wrapper plugin JSON test config: {:?}",
+            config_result.err()
+        );
+
+        let config = config_result.unwrap();
+        assert_eq!(
+            config.plugins.len(),
+            5,
+            "Expected 5 plugins in wrapper JSON test config"
+        );
+
+        // Test that time plugin has cross_plugin_tools configured correctly
+        let time_plugin = &config.plugins[&PluginName("time".to_string())];
+        let time_runtime = time_plugin.runtime_config.as_ref().unwrap();
+        let time_cross_tools = time_runtime.cross_plugin_tools.as_ref().unwrap();
+        assert_eq!(time_cross_tools.len(), 1);
+        assert!(time_cross_tools.contains(&"time".to_string()));
+
+        // Test wrapper plugin configuration
+        let wrapper_plugin = &config.plugins[&PluginName("wrapper".to_string())];
+        assert!(
+            wrapper_plugin
+                .url
+                .to_string()
+                .contains("wrapper_plugin.wasm")
+        );
+        let wrapper_runtime = wrapper_plugin.runtime_config.as_ref().unwrap();
+        assert!(wrapper_runtime.cross_plugin_tools.is_none());
+    }
+
+    #[test]
     fn test_cross_plugin_tools_serialization_roundtrip() {
         let original_config = Config {
             auths: None,

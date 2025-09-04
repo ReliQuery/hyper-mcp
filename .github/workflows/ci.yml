@@ -26,6 +26,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Set up Python for integration tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Install WASM target
         run: rustup target add wasm32-wasip1
 
@@ -40,11 +45,22 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
-      - name: Run tests
+      - name: Run unit tests
         run: cargo test --workspace --all-features
 
       - name: Build hyper-mcp
         run: cargo build
+
+      - name: Run integration tests
+        run: |
+          echo "Building wrapper plugin WASM..."
+          cd tests/integrations/wrapper-plugin
+          cargo build --release --target wasm32-wasip1
+          echo "🧪 Running wrapper plugin integration tests..."
+          echo "This tests cross-plugin communication functionality using MCP protocol"
+          ./tests/integrations/test_wrapper_plugin.sh
+        env:
+          RUST_LOG: info
 
       - name: Build example plugins
         run: |

@@ -4,9 +4,11 @@ use crate::{
     https_auth::Authenticator,
     oci::pull_and_extract_oci_image,
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use bytesize::ByteSize;
-use extism::{Manifest, Plugin, Wasm};
+use extism::{EXTISM_USER_MODULE, Function, Manifest, PTR, Plugin, UserData, Wasm, host_fn};
+use extism_convert::Json;
+use once_cell::sync::Lazy;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -20,7 +22,18 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tokio::sync::{OnceCell, RwLock};
+use tokio::{
+    runtime::{Builder, Handle, Runtime},
+    sync::{OnceCell, RwLock},
+};
+
+static CROSS_PLUGIN_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+    Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap()
+});
 
 #[derive(Debug, Clone)]
 pub struct ToolNameParseError;
@@ -106,7 +119,7 @@ impl PluginService {
             .and_then(|rc| rc.skip_tools.clone())
         {
             if skip_tools.iter().any(|s| s == &tool_name) {
-                log::info!("Tool {tool_name} in skip_tools");
+                tracing::info!("Tool {tool_name} in skip_tools");
                 return Err(McpError::method_not_found::<CallToolRequestMethod>());
             }
         }
@@ -183,7 +196,7 @@ impl PluginService {
                         for mut tool in parsed.tools {
                             let tool_name = tool.name.as_ref() as &str;
                             if skip_tools.iter().any(|s| s == tool_name) {
-                                log::info!(
+                                tracing::info!(
                                     "Skipping tool {} as requested in skip_tools",
                                     tool.name
                                 );
@@ -195,7 +208,7 @@ impl PluginService {
                             ) {
                                 Ok(namespaced) => namespaced,
                                 Err(_) => {
-                                    log::error!(
+                                    tracing::error!(
                                         "Tool name {tool_name} in plugin {plugin_name} contains '::', which is not allowed. Skipping this tool to avoid ambiguity.",
                                     );
                                     continue;
@@ -206,10 +219,10 @@ impl PluginService {
                     }
                 }
                 Ok(Err(e)) => {
-                    log::error!("{plugin_name} describe() error: {e}");
+                    tracing::error!("{plugin_name} describe() error: {e}");
                 }
                 Err(e) => {
-                    log::error!("{plugin_name} spawn_blocking error: {e}");
+                    tracing::error!("{plugin_name} spawn_blocking error: {e}");
                 }
             }
         }
@@ -221,6 +234,46 @@ impl PluginService {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
         let s3_client: OnceCell<aws_sdk_s3::Client> = OnceCell::new();
+
+        host_fn!(cross_plugin_call_tool(svc: PluginService; request: Json<CallToolRequestParam>) -> Json<CallToolResult> {
+            let svc = svc.get()?;
+            let svc = svc.lock().unwrap();
+            let request = request.into_inner();
+
+            let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name.to_owned()) {
+                Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
+                Err(e) => {
+                    bail!("Failed to parse tool name: {e}");
+                }
+            };
+            let plugin_config = match svc.config.plugins.get(&plugin_name) {
+                Some(config) => config,
+                None => {
+                    bail!("Plugin configuration not found for {plugin_name}");
+                }
+            };
+            if let Some(cross_plugin_tools) = &plugin_config
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.cross_plugin_tools.clone())
+            {
+                if cross_plugin_tools.iter().all(|s| s != &tool_name) {
+                    tracing::info!("Tool {tool_name} not in cross_plugin_tools for {plugin_name}");
+                    bail!("Tool {tool_name} not allowed in cross-plugin calls for {plugin_name}");
+                }
+            }
+
+            if let Ok(handle) = Handle::try_current() {
+                handle.block_on(svc.call_tool(request))
+                    .map(Json)
+                    .map_err(Into::into)
+            } else {
+                CROSS_PLUGIN_RUNTIME.block_on(svc.call_tool(request))
+                    .map(Json)
+                    .map_err(Into::into)
+            }
+
+        });
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
             let wasm_content = match plugin_cfg.url.scheme() {
@@ -276,10 +329,10 @@ impl PluginService {
                     )
                     .await
                     {
-                        log::error!("Error pulling oci plugin: {e}");
+                        tracing::error!("Error pulling oci plugin: {e}");
                         return Err(anyhow::anyhow!("Failed to pull OCI plugin: {}", e));
                     }
-                    log::info!("cache plugin `{plugin_name}` to : {local_output_path}");
+                    tracing::info!("cache plugin `{plugin_name}` to : {local_output_path}");
                     tokio::fs::read(local_output_path).await?
                 }
                 "s3" => {
@@ -301,7 +354,7 @@ impl PluginService {
                         Ok(response) => match response.body.collect().await {
                             Ok(body) => body.to_vec(),
                             Err(e) => {
-                                log::error!("Failed to collect S3 object body: {e}");
+                                tracing::error!("Failed to collect S3 object body: {e}");
                                 return Err(anyhow::anyhow!(
                                     "Failed to collect S3 object body: {}",
                                     e
@@ -309,13 +362,13 @@ impl PluginService {
                             }
                         },
                         Err(e) => {
-                            log::error!("Failed to get object from S3: {e}");
+                            tracing::error!("Failed to get object from S3: {e}");
                             return Err(anyhow::anyhow!("Failed to get object from S3: {}", e));
                         }
                     }
                 }
                 unsupported => {
-                    log::error!("Unsupported plugin URL scheme: {unsupported}");
+                    tracing::error!("Unsupported plugin URL scheme: {unsupported}");
                     return Err(anyhow::anyhow!(
                         "Unsupported plugin URL scheme: {}",
                         unsupported
@@ -325,7 +378,7 @@ impl PluginService {
 
             let mut manifest = Manifest::new([Wasm::data(wasm_content)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
-                log::info!("runtime_cfg: {runtime_cfg:?}");
+                tracing::info!("runtime_cfg: {runtime_cfg:?}");
                 if let Some(hosts) = &runtime_cfg.allowed_hosts {
                     for host in hosts {
                         manifest = manifest.with_allowed_host(host);
@@ -353,20 +406,34 @@ impl PluginService {
                             manifest = manifest.with_memory_max(num_pages as u32);
                         }
                         Err(e) => {
-                            log::error!(
+                            tracing::error!(
                                 "Failed to parse memory_limit '{memory_limit}': {e}. Using default memory limit."
                             );
                         }
                     }
                 }
             }
-            let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
+            let plugin = Arc::new(Mutex::new(
+                Plugin::new(
+                    &manifest,
+                    [Function::new(
+                        "call_tool",
+                        [PTR],
+                        [PTR],
+                        UserData::new(self.clone()),
+                        cross_plugin_call_tool,
+                    )
+                    .with_namespace(EXTISM_USER_MODULE)],
+                    true,
+                )
+                .unwrap(),
+            ));
 
             self.plugins
                 .write()
                 .await
                 .insert(plugin_name.clone(), plugin);
-            log::info!("Loaded plugin {plugin_name}");
+            tracing::info!("Loaded plugin {plugin_name}");
         }
         Ok(())
     }
