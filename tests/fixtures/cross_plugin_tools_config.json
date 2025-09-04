@@ -1,0 +1,72 @@
+{
+  "plugins": {
+    "shared-tools-plugin": {
+      "url": "file:///path/to/shared-plugin",
+      "runtime_config": {
+        "cross_plugin_tools": [
+          "shared-logger",
+          "common-http-client",
+          "database-connector"
+        ],
+        "skip_tools": [
+          "private-tool"
+        ],
+        "allowed_hosts": [
+          "api.example.com"
+        ],
+        "env_vars": {
+          "DEBUG": "true",
+          "LOG_LEVEL": "info"
+        },
+        "memory_limit": "512MB"
+      }
+    },
+    "minimal-shared-plugin": {
+      "url": "https://example.com/minimal-plugin",
+      "runtime_config": {
+        "cross_plugin_tools": [
+          "utility-tool",
+          "validator"
+        ]
+      }
+    },
+    "empty-shared-plugin": {
+      "url": "http://localhost:3001/empty-plugin",
+      "runtime_config": {
+        "cross_plugin_tools": [],
+        "skip_tools": [
+          "unwanted-tool"
+        ]
+      }
+    },
+    "standard-plugin": {
+      "url": "file:///path/to/standard-plugin",
+      "runtime_config": {
+        "allowed_hosts": [
+          "secure.api.com"
+        ],
+        "memory_limit": "256MB"
+      }
+    },
+    "basic-plugin": {
+      "url": "http://localhost:3002/basic-plugin"
+    },
+    "multi-tool-plugin": {
+      "url": "file:///path/to/multi-tool-plugin",
+      "runtime_config": {
+        "cross_plugin_tools": [
+          "auth-service",
+          "cache-manager",
+          "event-bus",
+          "config-loader",
+          "metrics-collector",
+          "notification-sender"
+        ],
+        "allowed_paths": [
+          "/app/data",
+          "/tmp/cache"
+        ]
+      }
+    }
+  }
+}
