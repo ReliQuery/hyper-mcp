@@ -12,13 +12,21 @@
     "myip": {
       "url": "oci://ghcr.io/tuananh/myip-plugin:latest",
       "runtime_config": {
-        "allowed_hosts": ["1.1.1.1"]
+        "allowed_hosts": ["1.1.1.1"],
+        "cross_plugin_tools": ["get_ip"]
       }
     },
     "fetch": {
       "url": "oci://ghcr.io/tuananh/fetch-plugin:latest",
       "runtime_config": {
-        "allowed_hosts": ["*"]
+        "allowed_hosts": ["*"],
+        "cross_plugin_tools": ["http_client", "url_validator"]
+      }
+    },
+    "utilities": {
+      "url": "oci://ghcr.io/tuananh/utility-plugin:latest",
+      "runtime_config": {
+        "cross_plugin_tools": ["json_parser", "base64_encoder", "logger"]
       }
     }
   }
