@@ -25,7 +25,7 @@ imports:
       Invoke the given tool method with parameters.
       Returns a CallToolResult containing the tool output (or error).
     input:
-      $ref: "#/components/schemas/CallToolRequest"
+      $ref: "#/components/schemas/Params"
       contentType: application/json
     output:
       $ref: "#/components/schemas/CallToolResult"
