@@ -240,7 +240,7 @@ impl PluginService {
             let svc = svc.lock().unwrap();
             let request = request.into_inner();
 
-            let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name.to_owned()) {
+            let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name.clone()) {
                 Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
                 Err(e) => {
                     bail!("Failed to parse tool name: {e}");
