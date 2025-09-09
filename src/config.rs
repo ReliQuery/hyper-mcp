@@ -2238,7 +2238,7 @@ plugins:
     fn test_cross_plugin_tools_yaml_deserialization() {
         let yaml_config = r#"
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"
     runtime_config:
       cross_plugin_tools:
@@ -2248,7 +2248,7 @@ plugins:
 "#;
 
         let config: Config = serde_yaml::from_str(yaml_config).unwrap();
-        let plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         let runtime_config = plugin.runtime_config.as_ref().unwrap();
 
         let cross_plugin_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
@@ -2263,7 +2263,7 @@ plugins:
         let json_config = r#"
 {
   "plugins": {
-    "test-plugin": {
+    "test_plugin": {
       "url": "file:///path/to/plugin",
       "runtime_config": {
         "cross_plugin_tools": ["tool-a", "tool-b"]
@@ -2274,7 +2274,7 @@ plugins:
 "#;
 
         let config: Config = serde_json::from_str(json_config).unwrap();
-        let plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         let runtime_config = plugin.runtime_config.as_ref().unwrap();
 
         let cross_plugin_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
@@ -2287,14 +2287,14 @@ plugins:
     fn test_cross_plugin_tools_empty_list() {
         let yaml_config = r#"
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"
     runtime_config:
       cross_plugin_tools: []
 "#;
 
         let config: Config = serde_yaml::from_str(yaml_config).unwrap();
-        let plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         let runtime_config = plugin.runtime_config.as_ref().unwrap();
 
         let cross_plugin_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
@@ -2305,7 +2305,7 @@ plugins:
     fn test_cross_plugin_tools_none_value() {
         let yaml_config = r#"
 plugins:
-  test-plugin:
+  test_plugin:
     url: "file:///path/to/plugin"
     runtime_config:
       skip_tools:
@@ -2313,7 +2313,7 @@ plugins:
 "#;
 
         let config: Config = serde_yaml::from_str(yaml_config).unwrap();
-        let plugin = &config.plugins[&PluginName("test-plugin".to_string())];
+        let plugin = &config.plugins[&PluginName("test_plugin".to_string())];
         let runtime_config = plugin.runtime_config.as_ref().unwrap();
 
         assert!(runtime_config.cross_plugin_tools.is_none());
@@ -2324,7 +2324,7 @@ plugins:
     fn test_cross_plugin_tools_mixed_config() {
         let yaml_config = r#"
 plugins:
-  plugin-with-cross-tools:
+  plugin_with_cross_tools:
     url: "file:///path/to/plugin1"
     runtime_config:
       cross_plugin_tools:
@@ -2333,7 +2333,7 @@ plugins:
       skip_tools:
         - "private-tool"
 
-  plugin-without-cross-tools:
+  plugin_without_cross_tools:
     url: "file:///path/to/plugin2"
     runtime_config:
       allowed_hosts:
@@ -2344,7 +2344,7 @@ plugins:
         assert_eq!(config.plugins.len(), 2);
 
         // Test plugin with cross_plugin_tools
-        let plugin1 = &config.plugins[&PluginName("plugin-with-cross-tools".to_string())];
+        let plugin1 = &config.plugins[&PluginName("plugin_with_cross_tools".to_string())];
         let runtime_config1 = plugin1.runtime_config.as_ref().unwrap();
         let cross_tools = runtime_config1.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(cross_tools.len(), 2);
@@ -2353,7 +2353,7 @@ plugins:
         assert!(runtime_config1.skip_tools.is_some());
 
         // Test plugin without cross_plugin_tools
-        let plugin2 = &config.plugins[&PluginName("plugin-without-cross-tools".to_string())];
+        let plugin2 = &config.plugins[&PluginName("plugin_without_cross_tools".to_string())];
         let runtime_config2 = plugin2.runtime_config.as_ref().unwrap();
         assert!(runtime_config2.cross_plugin_tools.is_none());
         assert!(runtime_config2.allowed_hosts.is_some());
@@ -2374,7 +2374,7 @@ plugins:
         assert_eq!(config.plugins.len(), 6, "Expected 6 plugins in the config");
 
         // Test plugin with comprehensive cross_plugin_tools config
-        let shared_plugin = &config.plugins[&PluginName("shared-tools-plugin".to_string())];
+        let shared_plugin = &config.plugins[&PluginName("shared_tools_plugin".to_string())];
         let runtime_config = shared_plugin.runtime_config.as_ref().unwrap();
         let cross_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(cross_tools.len(), 3);
@@ -2385,7 +2385,7 @@ plugins:
         assert!(runtime_config.allowed_hosts.is_some());
 
         // Test minimal plugin with only cross_plugin_tools
-        let minimal_plugin = &config.plugins[&PluginName("minimal-shared-plugin".to_string())];
+        let minimal_plugin = &config.plugins[&PluginName("minimal_shared_plugin".to_string())];
         let minimal_runtime = minimal_plugin.runtime_config.as_ref().unwrap();
         let minimal_cross_tools = minimal_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(minimal_cross_tools.len(), 2);
@@ -2394,24 +2394,24 @@ plugins:
         assert!(minimal_runtime.skip_tools.is_none());
 
         // Test plugin with empty cross_plugin_tools list
-        let empty_plugin = &config.plugins[&PluginName("empty-shared-plugin".to_string())];
+        let empty_plugin = &config.plugins[&PluginName("empty_shared_plugin".to_string())];
         let empty_runtime = empty_plugin.runtime_config.as_ref().unwrap();
         let empty_cross_tools = empty_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(empty_cross_tools.len(), 0);
         assert!(empty_runtime.skip_tools.is_some());
 
         // Test plugin without cross_plugin_tools
-        let standard_plugin = &config.plugins[&PluginName("standard-plugin".to_string())];
+        let standard_plugin = &config.plugins[&PluginName("standard_plugin".to_string())];
         let standard_runtime = standard_plugin.runtime_config.as_ref().unwrap();
         assert!(standard_runtime.cross_plugin_tools.is_none());
         assert!(standard_runtime.allowed_hosts.is_some());
 
         // Test basic plugin with no runtime config
-        let basic_plugin = &config.plugins[&PluginName("basic-plugin".to_string())];
+        let basic_plugin = &config.plugins[&PluginName("basic_plugin".to_string())];
         assert!(basic_plugin.runtime_config.is_none());
 
         // Test plugin with many cross_plugin_tools
-        let multi_plugin = &config.plugins[&PluginName("multi-tool-plugin".to_string())];
+        let multi_plugin = &config.plugins[&PluginName("multi_tool_plugin".to_string())];
         let multi_runtime = multi_plugin.runtime_config.as_ref().unwrap();
         let multi_cross_tools = multi_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(multi_cross_tools.len(), 6);
@@ -2434,7 +2434,7 @@ plugins:
         assert_eq!(config.plugins.len(), 6, "Expected 6 plugins in the config");
 
         // Test comprehensive plugin configuration
-        let shared_plugin = &config.plugins[&PluginName("shared-tools-plugin".to_string())];
+        let shared_plugin = &config.plugins[&PluginName("shared_tools_plugin".to_string())];
         let runtime_config = shared_plugin.runtime_config.as_ref().unwrap();
         let cross_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(cross_tools.len(), 3);
@@ -2448,7 +2448,7 @@ plugins:
         assert_eq!(runtime_config.env_vars.as_ref().unwrap()["DEBUG"], "true");
 
         // Test multi-tool plugin JSON parsing
-        let multi_plugin = &config.plugins[&PluginName("multi-tool-plugin".to_string())];
+        let multi_plugin = &config.plugins[&PluginName("multi_tool_plugin".to_string())];
         let multi_runtime = multi_plugin.runtime_config.as_ref().unwrap();
         let multi_cross_tools = multi_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(multi_cross_tools.len(), 6);
@@ -2507,7 +2507,7 @@ plugins:
         );
 
         // Test time-service plugin with cross_plugin_tools and additional config
-        let time_service_plugin = &config.plugins[&PluginName("time-service".to_string())];
+        let time_service_plugin = &config.plugins[&PluginName("time_service".to_string())];
         let time_service_runtime = time_service_plugin.runtime_config.as_ref().unwrap();
         let time_service_cross_tools = time_service_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(time_service_cross_tools.len(), 1);
@@ -2516,7 +2516,7 @@ plugins:
         assert!(time_service_runtime.env_vars.is_some());
 
         // Test private-time plugin (no cross_plugin_tools)
-        let private_time_plugin = &config.plugins[&PluginName("private-time".to_string())];
+        let private_time_plugin = &config.plugins[&PluginName("private_time".to_string())];
         let private_time_runtime = private_time_plugin.runtime_config.as_ref().unwrap();
         assert!(private_time_runtime.cross_plugin_tools.is_none());
         assert!(private_time_runtime.skip_tools.is_some());
@@ -2525,7 +2525,7 @@ plugins:
         assert_eq!(skip_tools[0], "parse_time");
 
         // Test wrapper-secondary plugin
-        let wrapper_secondary = &config.plugins[&PluginName("wrapper-secondary".to_string())];
+        let wrapper_secondary = &config.plugins[&PluginName("wrapper_secondary".to_string())];
         let wrapper_secondary_runtime = wrapper_secondary.runtime_config.as_ref().unwrap();
         assert!(wrapper_secondary_runtime.cross_plugin_tools.is_none());
         assert!(wrapper_secondary_runtime.env_vars.is_some());
@@ -2578,7 +2578,7 @@ plugins:
             plugins: {
                 let mut plugins = HashMap::new();
                 plugins.insert(
-                    PluginName("test-plugin".to_string()),
+                    PluginName("test_plugin".to_string()),
                     PluginConfig {
                         url: Url::parse("file:///path/to/plugin").unwrap(),
                         runtime_config: Some(RuntimeConfig {
@@ -2602,7 +2602,7 @@ plugins:
         let yaml_str = serde_yaml::to_string(&original_config).unwrap();
         let yaml_deserialized: Config = serde_yaml::from_str(&yaml_str).unwrap();
 
-        let yaml_plugin = &yaml_deserialized.plugins[&PluginName("test-plugin".to_string())];
+        let yaml_plugin = &yaml_deserialized.plugins[&PluginName("test_plugin".to_string())];
         let yaml_runtime = yaml_plugin.runtime_config.as_ref().unwrap();
         let yaml_cross_tools = yaml_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(yaml_cross_tools.len(), 2);
@@ -2613,7 +2613,7 @@ plugins:
         let json_str = serde_json::to_string(&original_config).unwrap();
         let json_deserialized: Config = serde_json::from_str(&json_str).unwrap();
 
-        let json_plugin = &json_deserialized.plugins[&PluginName("test-plugin".to_string())];
+        let json_plugin = &json_deserialized.plugins[&PluginName("test_plugin".to_string())];
         let json_runtime = json_plugin.runtime_config.as_ref().unwrap();
         let json_cross_tools = json_runtime.cross_plugin_tools.as_ref().unwrap();
         assert_eq!(json_cross_tools.len(), 2);
@@ -2626,7 +2626,7 @@ plugins:
         // Test with special characters in tool names
         let yaml_config = r#"
 plugins:
-  special-plugin:
+  special_plugin:
     url: "file:///path/to/plugin"
     runtime_config:
       cross_plugin_tools:
@@ -2638,7 +2638,7 @@ plugins:
 "#;
 
         let config: Config = serde_yaml::from_str(yaml_config).unwrap();
-        let plugin = &config.plugins[&PluginName("special-plugin".to_string())];
+        let plugin = &config.plugins[&PluginName("special_plugin".to_string())];
         let runtime_config = plugin.runtime_config.as_ref().unwrap();
         let cross_tools = runtime_config.cross_plugin_tools.as_ref().unwrap();
 

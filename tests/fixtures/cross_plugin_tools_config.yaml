@@ -1,7 +1,7 @@
 # Test fixture for cross_plugin_tools feature testing
 plugins:
   # Plugin with cross_plugin_tools and other runtime config options
-  shared-tools-plugin:
+  shared_tools_plugin:
     url: "file:///path/to/shared-plugin"
     runtime_config:
       cross_plugin_tools:
@@ -18,7 +18,7 @@ plugins:
       memory_limit: "512MB"
 
   # Plugin with only cross_plugin_tools
-  minimal-shared-plugin:
+  minimal_shared_plugin:
     url: "https://example.com/minimal-plugin"
     runtime_config:
       cross_plugin_tools:
@@ -26,7 +26,7 @@ plugins:
         - "validator"
 
   # Plugin with empty cross_plugin_tools list
-  empty-shared-plugin:
+  empty_shared_plugin:
     url: "http://localhost:3001/empty-plugin"
     runtime_config:
       cross_plugin_tools: []
@@ -34,7 +34,7 @@ plugins:
         - "unwanted-tool"
 
   # Plugin without cross_plugin_tools but with other runtime config
-  standard-plugin:
+  standard_plugin:
     url: "file:///path/to/standard-plugin"
     runtime_config:
       allowed_hosts:
@@ -42,11 +42,11 @@ plugins:
       memory_limit: "256MB"
 
   # Plugin with no runtime config at all
-  basic-plugin:
+  basic_plugin:
     url: "http://localhost:3002/basic-plugin"
 
   # Plugin with many cross_plugin_tools to test list handling
-  multi-tool-plugin:
+  multi_tool_plugin:
     url: "file:///path/to/multi-tool-plugin"
     runtime_config:
       cross_plugin_tools:

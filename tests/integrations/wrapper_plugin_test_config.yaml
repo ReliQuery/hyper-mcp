@@ -17,7 +17,7 @@ plugins:
       # but can call tools from other plugins that have exposed them
 
   # Additional time plugin with a different name for testing multiple instances
-  time-service:
+  time_service:
     url: "oci://ghcr.io/tuananh/time-plugin:latest"
     runtime_config:
       cross_plugin_tools:
@@ -29,7 +29,7 @@ plugins:
       memory_limit: "256MB"
 
   # Plugin that doesn't expose any cross-plugin tools (for negative testing)
-  private-time:
+  private_time:
     url: "oci://ghcr.io/tuananh/time-plugin:latest"
     runtime_config:
       # No cross_plugin_tools - this plugin's tools are private
@@ -38,7 +38,7 @@ plugins:
       memory_limit: "128MB"
 
   # Another wrapper plugin instance for testing multiple wrappers
-  wrapper-secondary:
+  wrapper_secondary:
     url: "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm"
     runtime_config:
       memory_limit: "64MB"

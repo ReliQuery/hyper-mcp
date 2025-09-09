@@ -3,6 +3,7 @@
     "test_plugin": {
       "url": "file:///path/to/plugin",
       "runtime_config": {
+        "cross_plugin_tools": ["shared-tool1", "shared-tool2"],
         "skip_tools": ["tool1", "tool2"],
         "allowed_hosts": ["example.com", "localhost"],
         "allowed_paths": ["/tmp", "/var/log"],

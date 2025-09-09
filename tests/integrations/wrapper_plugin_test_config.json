@@ -13,7 +13,7 @@
         "memory_limit": "64MB"
       }
     },
-    "time-service": {
+    "time_service": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest",
       "runtime_config": {
         "cross_plugin_tools": ["time"],
@@ -24,14 +24,14 @@
         "memory_limit": "256MB"
       }
     },
-    "private-time": {
+    "private_time": {
       "url": "oci://ghcr.io/tuananh/time-plugin:latest",
       "runtime_config": {
         "skip_tools": ["parse_time"],
         "memory_limit": "128MB"
       }
     },
-    "wrapper-secondary": {
+    "wrapper_secondary": {
       "url": "file:///tests/integrations/wrapper-plugin/target/wasm32-wasip1/release/wrapper_plugin.wasm",
       "runtime_config": {
         "memory_limit": "64MB",
