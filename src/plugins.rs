@@ -281,11 +281,10 @@ impl ServerHandler for PluginService {
             .runtime_config
             .as_ref()
             .and_then(|rc| rc.skip_tools.clone())
+            && skip_tools.iter().any(|s| s == &tool_name)
         {
-            if skip_tools.iter().any(|s| s == &tool_name) {
-                tracing::info!("Tool {tool_name} in skip_tools");
-                return Err(McpError::method_not_found::<CallToolRequestMethod>());
-            }
+            tracing::info!("Tool {tool_name} in skip_tools");
+            return Err(McpError::method_not_found::<CallToolRequestMethod>());
         }
 
         let call_payload = json!({
