@@ -4,10 +4,10 @@ use crate::{
     https_auth::Authenticator,
     oci::pull_and_extract_oci_image,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use bytesize::ByteSize;
 use dashmap::{DashMap, Entry};
-use extism::{Manifest, Plugin, Wasm};
+use extism::{EXTISM_USER_MODULE, Function, Manifest, Plugin, UserData, Wasm, host_fn};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -18,10 +18,15 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt,
+    ops::Deref,
     str::FromStr,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
-use tokio::sync::{OnceCell, RwLock, SetOnce};
+use tokio::{
+    runtime::Handle,
+    sync::{OnceCell, RwLock, SetOnce},
+};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct ToolNameParseError;
@@ -82,14 +87,66 @@ fn check_env_reference(value: &str) -> String {
     }
 }
 
-#[derive(Clone)]
-pub struct PluginService {
+// Declares a host function `notify_tool_list_changed` that plugins can call
+host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
+    let ctx = ctx.get()?.lock().unwrap().clone();
+    let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+        anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+    })?;
+    let plugin_name = plugin_service
+        .get_plugin_name(ctx.plugin_service_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Plugin name for ID {:?} not found",
+                ctx.plugin_service_id
+            )
+        })?;
+    tracing::info!("Notifying tool list changed from {plugin_name}");
+    match plugin_service.peer.get() {
+        Some(peer) => ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from),
+        None => Ok(()),
+    }
+});
+
+static PLUGIN_SERVICE_INNER_REGISTRY: LazyLock<DashMap<Uuid, Weak<PluginServiceInner>>> =
+    LazyLock::new(DashMap::new);
+static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
+
+#[derive(Clone, Debug)]
+struct PluginServiceContext {
+    handle: Handle,
+    plugin_service_id: Uuid,
+}
+
+pub struct PluginServiceInner {
     config: Config,
+    id: Uuid,
+    names: Arc<RwLock<HashMap<Uuid, PluginName>>>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: Arc<RwLock<HashMap<PluginName, Arc<Mutex<Plugin>>>>>,
 }
 
-static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
+impl Drop for PluginServiceInner {
+    fn drop(&mut self) {
+        PLUGIN_SERVICE_INNER_REGISTRY.remove(&self.id);
+    }
+}
+
+pub struct PluginService(Arc<PluginServiceInner>);
+
+impl Clone for PluginService {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl Deref for PluginService {
+    type Target = Arc<PluginServiceInner>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl PluginService {
     pub async fn new(cli: &Cli) -> Result<Self> {
@@ -105,14 +162,48 @@ impl PluginService {
         let config_path = cli.config_file.as_ref().unwrap_or(&default_config_path);
         tracing::info!("Using config file at {}", config_path.display());
 
-        let service = Self {
+        let inner = Arc::new(PluginServiceInner {
             config: load_config(config_path).await?,
+            id: Uuid::new_v4(),
+            names: Arc::new(RwLock::new(HashMap::new())),
             peer: SetOnce::new(),
             plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
+        });
+        PLUGIN_SERVICE_INNER_REGISTRY.insert(inner.id, Arc::downgrade(&inner));
+        let service = Self(inner);
 
         service.load_plugins(cli).await?;
         Ok(service)
+    }
+
+    fn get(id: Uuid) -> Option<PluginService> {
+        if let Some(weak_inner) = PLUGIN_SERVICE_INNER_REGISTRY.get(&id)
+            && let Some(inner) = weak_inner.upgrade()
+        {
+            return Some(PluginService(inner));
+        }
+        PLUGIN_SERVICE_INNER_REGISTRY.remove(&id);
+        None
+    }
+
+    /*/
+    fn get_plugin_by_id(&self, plugin_id: Uuid) -> Option<Arc<Mutex<Plugin>>> {
+        if let Some(plugin_name) = self.get_plugin_name(plugin_id) {
+            return self.get_plugin_by_name(plugin_name);
+        }
+        None
+    }
+
+    fn get_plugin_by_name(&self, plugin_name: PluginName) -> Option<Arc<Mutex<Plugin>>> {
+        self.plugins
+            .blocking_read()
+            .get(&plugin_name)
+            .map(|p| Arc::clone(p))
+    }
+    */
+
+    fn get_plugin_name(&self, plugin_id: Uuid) -> Option<PluginName> {
+        self.names.blocking_read().get(&plugin_id).cloned()
     }
 
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
@@ -268,8 +359,29 @@ impl PluginService {
                     }
                 }
             }
-            let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
+            let plugin = Arc::new(Mutex::new(
+                Plugin::new(
+                    &manifest,
+                    [Function::new(
+                        "notify_tool_list_changed",
+                        [extism::PTR],
+                        [extism::PTR],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                        }),
+                        notify_tool_list_changed,
+                    )
+                    .with_namespace(EXTISM_USER_MODULE)],
+                    true,
+                )
+                .unwrap(),
+            ));
 
+            self.names
+                .write()
+                .await
+                .insert(plugin.lock().unwrap().id, plugin_name.clone());
             self.plugins
                 .write()
                 .await
@@ -587,7 +699,17 @@ mod tests {
         }
     }
 
-    fn create_test_service(service: PluginService) -> RunningService<RoleServer, PluginService> {
+    fn create_test_service(config: Config) -> PluginService {
+        PluginService(Arc::new(PluginServiceInner {
+            config,
+            id: Uuid::new_v4(),
+            names: Arc::new(RwLock::new(HashMap::new())),
+            peer: SetOnce::new(),
+            plugins: Arc::new(RwLock::new(HashMap::new())),
+        }))
+    }
+
+    fn create_test_server(service: PluginService) -> RunningService<RoleServer, PluginService> {
         let (_, to_server_rx) = mpsc::channel(8);
         let (to_client_tx, _) = mpsc::channel(8);
         let transport = SinkStreamTransport::new(to_client_tx, to_server_rx);
@@ -988,11 +1110,7 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
+        let service = create_test_service(config);
 
         let info = service.get_info();
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
@@ -1023,7 +1141,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Verify the service was created successfully
         assert!(
@@ -1139,7 +1257,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Verify the service was created successfully
         assert!(
@@ -1218,12 +1336,8 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
-        let running = create_test_service(service);
+        let service = create_test_service(config);
+        let running = create_test_server(service);
 
         // Test calling tool with invalid format (missing plugin name separator)
         let request = CallToolRequestParam {
@@ -1261,12 +1375,8 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
-        let running = create_test_service(service);
+        let service = create_test_service(config);
+        let running = create_test_server(service);
 
         // Test calling tool on nonexistent plugin
         let request = CallToolRequestParam {
@@ -1311,7 +1421,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Verify the service was created successfully
         assert!(
@@ -1405,7 +1515,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Verify the service was created successfully
         assert!(
@@ -1447,11 +1557,7 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
+        let service = create_test_service(config);
 
         // Test that the service implements ServerHandler
         assert_eq!(service.get_info().server_info.name, "hyper-mcp");
@@ -1463,11 +1569,7 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
+        let service = create_test_service(config);
 
         // Test server info
         let info = service.get_info();
@@ -1481,11 +1583,7 @@ plugins:
             plugins: HashMap::new(),
             auths: Some(HashMap::new()),
         };
-        let service = PluginService {
-            config,
-            peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-        };
+        let service = create_test_service(config);
 
         // Test that ServerHandler methods exist by calling get_info
         let info = service.get_info();
@@ -1554,7 +1652,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
@@ -1621,7 +1719,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_service(service);
+        let running = create_test_server(service);
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
