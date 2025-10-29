@@ -660,14 +660,60 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use rmcp::{
+        ClientHandler,
         model::ClientInfo,
-        service::{RoleClient, RunningService, serve_client, serve_server},
+        service::{RoleClient, RunningService, Service, serve_client, serve_server},
     };
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use tempfile::TempDir;
     use tokio::io::duplex;
     use tokio_test::assert_ok;
     use tokio_util::sync::CancellationToken;
+
+    struct TestClientInner {
+        tool_list_changed_count: AtomicUsize,
+    }
+
+    struct TestClient(Arc<TestClientInner>);
+
+    impl Clone for TestClient {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+
+    impl Deref for TestClient {
+        type Target = Arc<TestClientInner>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl ClientHandler for TestClient {
+        fn on_tool_list_changed(
+            &self,
+            _context: NotificationContext<RoleClient>,
+        ) -> impl Future<Output = ()> + Send + '_ {
+            self.tool_list_changed_count.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(())
+        }
+    }
+
+    impl TestClient {
+        fn new() -> Self {
+            Self(Arc::new(TestClientInner {
+                tool_list_changed_count: AtomicUsize::new(0),
+            }))
+        }
+
+        fn get_tool_list_changed_count(&self) -> usize {
+            self.tool_list_changed_count.load(Ordering::SeqCst)
+        }
+    }
 
     async fn create_temp_config_file(content: &str) -> anyhow::Result<(TempDir, PathBuf)> {
         let temp_dir = TempDir::new()?;
@@ -713,12 +759,14 @@ mod tests {
         }))
     }
 
-    async fn create_test_pair(
-        service: PluginService,
-    ) -> (
-        RunningService<RoleServer, PluginService>,
-        RunningService<RoleClient, ClientInfo>,
-    ) {
+    async fn create_test_pair<S, C>(
+        service: S,
+        client: C,
+    ) -> (RunningService<RoleServer, S>, RunningService<RoleClient, C>)
+    where
+        S: Service<RoleServer>,
+        C: Service<RoleClient>,
+    {
         let (srv_io, cli_io) = duplex(64 * 1024);
         tokio::try_join!(
             async {
@@ -727,7 +775,7 @@ mod tests {
                     .map_err(anyhow::Error::from)
             },
             async {
-                serve_client(ClientInfo::default(), cli_io)
+                serve_client(client, cli_io)
                     .await
                     .map_err(anyhow::Error::from)
             }
@@ -1148,7 +1196,7 @@ plugins:
         };
         let service = create_test_service(config);
 
-        let info = service.get_info();
+        let info = rmcp::ServerHandler::get_info(&service);
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
         assert_eq!(info.server_info.name, "hyper-mcp");
         assert!(!info.server_info.version.is_empty());
@@ -1183,7 +1231,7 @@ plugins:
         };
         assert!(!plugins.is_empty(), "Should have loaded plugin");
 
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test the list_tools function
         let request = None; // No pagination for this test
@@ -1298,7 +1346,7 @@ plugins:
         };
         let plugins = plugins.clone();
         assert!(!plugins.is_empty(), "Should have loaded plugin");
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test the list_tools function with skip_tools configuration
         let request = None; // No pagination for this test
@@ -1371,7 +1419,7 @@ plugins:
             auths: Some(HashMap::new()),
         };
         let service = create_test_service(config);
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test calling tool with invalid format (missing plugin name separator)
         let request = CallToolRequestParam {
@@ -1410,7 +1458,7 @@ plugins:
             auths: Some(HashMap::new()),
         };
         let service = create_test_service(config);
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test calling tool on nonexistent plugin
         let request = CallToolRequestParam {
@@ -1460,7 +1508,7 @@ plugins:
         };
         let plugins = plugins.clone();
         assert!(!plugins.is_empty(), "Should have loaded plugin");
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test calling the time tool with get_time_utc operation
         let request = CallToolRequestParam {
@@ -1553,7 +1601,7 @@ plugins:
         };
         let plugins = plugins.clone();
         assert!(!plugins.is_empty(), "Should have loaded plugin");
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Test calling the skipped time tool
         let request = CallToolRequestParam {
@@ -1592,7 +1640,10 @@ plugins:
         let service = create_test_service(config);
 
         // Test that the service implements ServerHandler
-        assert_eq!(service.get_info().server_info.name, "hyper-mcp");
+        assert_eq!(
+            rmcp::ServerHandler::get_info(&service).server_info.name,
+            "hyper-mcp"
+        );
     }
 
     #[test]
@@ -1604,7 +1655,7 @@ plugins:
         let service = create_test_service(config);
 
         // Test server info
-        let info = service.get_info();
+        let info = rmcp::ServerHandler::get_info(&service);
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
         assert_eq!(info.server_info.name, "hyper-mcp");
     }
@@ -1618,7 +1669,7 @@ plugins:
         let service = create_test_service(config);
 
         // Test that ServerHandler methods exist by calling get_info
-        let info = service.get_info();
+        let info = rmcp::ServerHandler::get_info(&service);
         assert_eq!(info.server_info.name, "hyper-mcp");
         assert!(info.capabilities.tools.is_some());
     }
@@ -1686,7 +1737,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
@@ -1753,7 +1804,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
@@ -1812,7 +1863,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
         let ctx = create_test_ctx(&running);
 
         // List tools to verify the plugin loaded and has initial tools
@@ -1860,7 +1911,8 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let client = TestClient::new();
+        let (running, _client) = create_test_pair(service, client.clone()).await;
         let ctx = create_test_ctx(&running);
 
         // Get initial tool list
@@ -1884,6 +1936,8 @@ plugins:
             "add_tool should succeed. Error: {:?}",
             result.err()
         );
+
+        assert!(client.get_tool_list_changed_count() == 1);
 
         // Get updated tool list
         let ctx2 = create_test_ctx(&running);
@@ -1928,7 +1982,8 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let client = TestClient::new();
+        let (running, _client) = create_test_pair(service, client.clone()).await;
 
         // Call add_tool three times
         for i in 1..=3 {
@@ -1941,6 +1996,8 @@ plugins:
             let result = running.service().call_tool(add_tool_request, ctx).await;
             assert!(result.is_ok(), "add_tool call {} should succeed", i);
         }
+
+        assert!(client.get_tool_list_changed_count() == 3);
 
         // Get final tool list
         let ctx = create_test_ctx(&running);
@@ -1996,7 +2053,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Add a tool
         let ctx = create_test_ctx(&running);
@@ -2049,7 +2106,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
         let ctx = create_test_ctx(&running);
 
         // Call add_tool and verify response format
@@ -2099,7 +2156,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Add 5 tools and verify tool_count in responses
         for expected_count in 1..=5 {
@@ -2150,7 +2207,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Try to call a tool that doesn't exist yet (tool_5 when only tool_1 exists)
         let ctx = create_test_ctx(&running);
@@ -2199,7 +2256,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Call add_tool with additional arguments (should still work but they're ignored)
         let ctx = create_test_ctx(&running);
@@ -2248,7 +2305,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Get initial tools
         let ctx = create_test_ctx(&running);
@@ -2320,7 +2377,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let (running, _client) = create_test_pair(service).await;
+        let (running, _client) = create_test_pair(service, ClientInfo::default()).await;
 
         // Add two tools
         for _ in 0..2 {
