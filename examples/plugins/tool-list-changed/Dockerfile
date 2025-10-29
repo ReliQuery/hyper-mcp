@@ -11,4 +11,4 @@ RUN cargo auditable build --release --target wasm32-unknown-unknown
 
 FROM scratch
 WORKDIR /
-COPY --from=builder /workspace/target/wasm32-unknown-unknown/release/list_changed.wasm /plugin.wasm
+COPY --from=builder /workspace/target/wasm32-unknown-unknown/release/tool_list_changed.wasm /plugin.wasm

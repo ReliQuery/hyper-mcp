@@ -1,10 +1,10 @@
 [package]
-name = "list-changed"
+name = "tool-list-changed"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "list_changed"
+name = "tool_list_changed"
 crate-type = ["cdylib"]
 
 [dependencies]

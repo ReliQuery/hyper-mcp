@@ -84,32 +84,6 @@ pub mod types {
         extism_pdk::ToBytes,
     )]
     #[encoding(Json)]
-    pub struct BlobResourceContents {
-        /// A base64-encoded string representing the binary data of the item.
-        #[serde(rename = "blob")]
-        pub blob: String,
-
-        /// The MIME type of this resource, if known.
-        #[serde(rename = "mimeType")]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub mime_type: Option<String>,
-
-        /// The URI of this resource.
-        #[serde(rename = "uri")]
-        pub uri: String,
-    }
-
-    #[derive(
-        Default,
-        Debug,
-        Clone,
-        serde::Serialize,
-        serde::Deserialize,
-        extism_pdk::FromBytes,
-        extism_pdk::ToBytes,
-    )]
-    #[encoding(Json)]
     pub struct CallToolRequest {
         #[serde(rename = "method")]
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -291,32 +265,6 @@ pub mod types {
         extism_pdk::ToBytes,
     )]
     #[encoding(Json)]
-    pub struct TextResourceContents {
-        /// The MIME type of this resource, if known.
-        #[serde(rename = "mimeType")]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub mime_type: Option<String>,
-
-        /// The text of the item. This must only be set if the item can actually be represented as text (not binary data).
-        #[serde(rename = "text")]
-        pub text: String,
-
-        /// The URI of this resource.
-        #[serde(rename = "uri")]
-        pub uri: String,
-    }
-
-    #[derive(
-        Default,
-        Debug,
-        Clone,
-        serde::Serialize,
-        serde::Deserialize,
-        extism_pdk::FromBytes,
-        extism_pdk::ToBytes,
-    )]
-    #[encoding(Json)]
     pub struct ToolDescription {
         /// A description of the tool
         #[serde(rename = "description")]
@@ -330,16 +278,4 @@ pub mod types {
         #[serde(rename = "name")]
         pub name: String,
     }
-}
-
-pub mod raw_imports {
-    use super::*;
-    #[host_fn]
-    extern "ExtismHost" {
-        pub fn notify_tool_list_changed();
-    }
-}
-
-pub fn notify_tool_list_changed() -> Result<(), Error> {
-    unsafe { raw_imports::notify_tool_list_changed() }
 }

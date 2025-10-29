@@ -1,4 +1,4 @@
-# List Changed Plugin
+# Tool List Changed Plugin
 
 This plugin demonstrates dynamic tool list management in hyper-mcp. It showcases how a plugin can modify its tool list at runtime and notify the MCP server about these changes.
 
@@ -43,12 +43,12 @@ After each call to `add_tool`:
 ## Building
 
 ```bash
-cd hyper-mcp/examples/plugins/list-changed
+cd hyper-mcp/examples/plugins/tool-list-changed
 cargo build --target wasm32-unknown-unknown --release
 ```
 
 The compiled WASM file will be available at:
-`target/wasm32-unknown-unknown/release/list_changed.wasm`
+`target/wasm32-unknown-unknown/release/tool_list_changed.wasm`
 
 ## Configuration
 

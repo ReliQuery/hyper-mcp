@@ -21,6 +21,11 @@ impl StdError for CustomError {}
 // Global counter to track how many tools have been added
 static TOOL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+#[host_fn("extism:host/user")]
+extern "ExtismHost" {
+    fn notify_tool_list_changed();
+}
+
 // Called when a tool is invoked
 pub(crate) fn call(input: types::CallToolRequest) -> Result<types::CallToolResult, Error> {
     let tool_name = &input.params.name;
@@ -31,31 +36,30 @@ pub(crate) fn call(input: types::CallToolRequest) -> Result<types::CallToolResul
             let new_count = TOOL_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
 
             // Notify that the tool list has changed
-            if let Err(e) = pdk::notify_tool_list_changed() {
-                return Ok(CallToolResult {
+            match unsafe { notify_tool_list_changed() } {
+                Ok(()) => Ok(CallToolResult {
                     content: vec![Content {
-                        text: Some(format!("Failed to notify tool list changed: {}", e)),
+                        text: Some(
+                            json!({
+                                "message": format!("Successfully added tool_{}", new_count),
+                                "tool_count": new_count,
+                            })
+                            .to_string(),
+                        ),
+                        r#type: ContentType::Text,
+                        ..Default::default()
+                    }],
+                    is_error: Some(false),
+                }),
+                Err(e) => Ok(CallToolResult {
+                    content: vec![Content {
+                        text: Some(format!("Failed to notify host of tool list change: {}", e)),
                         r#type: ContentType::Text,
                         ..Default::default()
                     }],
                     is_error: Some(true),
-                });
+                }),
             }
-
-            Ok(CallToolResult {
-                content: vec![Content {
-                    text: Some(
-                        json!({
-                            "message": format!("Successfully added tool_{}", new_count),
-                            "tool_count": new_count,
-                        })
-                        .to_string(),
-                    ),
-                    r#type: ContentType::Text,
-                    ..Default::default()
-                }],
-                is_error: Some(false),
-            })
         }
         tool_name if tool_name.starts_with("tool_") => {
             // Handle dynamically created tools

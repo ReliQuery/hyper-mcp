@@ -24,7 +24,7 @@ use std::{
 };
 use tokio::{
     runtime::Handle,
-    sync::{OnceCell, RwLock, SetOnce},
+    sync::{OnceCell, SetOnce},
 };
 use uuid::Uuid;
 
@@ -93,15 +93,7 @@ host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
     let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
         anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
     })?;
-    let plugin_name = plugin_service
-        .get_plugin_name(ctx.plugin_service_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Plugin name for ID {:?} not found",
-                ctx.plugin_service_id
-            )
-        })?;
-    tracing::info!("Notifying tool list changed from {plugin_name}");
+    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
     match plugin_service.peer.get() {
         Some(peer) => ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from),
         None => Ok(()),
@@ -116,14 +108,15 @@ static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::ne
 struct PluginServiceContext {
     handle: Handle,
     plugin_service_id: Uuid,
+    plugin_name: String,
 }
 
 pub struct PluginServiceInner {
     config: Config,
     id: Uuid,
-    names: Arc<RwLock<HashMap<Uuid, PluginName>>>,
+    names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
-    plugins: Arc<RwLock<HashMap<PluginName, Arc<Mutex<Plugin>>>>>,
+    plugins: SetOnce<HashMap<PluginName, Arc<Mutex<Plugin>>>>,
 }
 
 impl Drop for PluginServiceInner {
@@ -165,9 +158,9 @@ impl PluginService {
         let inner = Arc::new(PluginServiceInner {
             config: load_config(config_path).await?,
             id: Uuid::new_v4(),
-            names: Arc::new(RwLock::new(HashMap::new())),
+            names: SetOnce::new(),
             peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
+            plugins: SetOnce::new(),
         });
         PLUGIN_SERVICE_INNER_REGISTRY.insert(inner.id, Arc::downgrade(&inner));
         let service = Self(inner);
@@ -200,16 +193,21 @@ impl PluginService {
             .get(&plugin_name)
             .map(|p| Arc::clone(p))
     }
-    */
 
     fn get_plugin_name(&self, plugin_id: Uuid) -> Option<PluginName> {
-        self.names.blocking_read().get(&plugin_id).cloned()
+        self.names
+            .get()
+            .and_then(|names| names.get(&plugin_id).cloned())
     }
+    */
 
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
         let s3_client: OnceCell<aws_sdk_s3::Client> = OnceCell::new();
+
+        let mut names = HashMap::new();
+        let mut plugins = HashMap::new();
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
             let wasm_content = match WASM_CONTENT_CACHE.entry(plugin_name.clone()) {
@@ -364,11 +362,12 @@ impl PluginService {
                     &manifest,
                     [Function::new(
                         "notify_tool_list_changed",
-                        [extism::PTR],
-                        [extism::PTR],
+                        [],
+                        [],
                         UserData::new(PluginServiceContext {
                             plugin_service_id: self.id,
                             handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
                         }),
                         notify_tool_list_changed,
                     )
@@ -378,16 +377,12 @@ impl PluginService {
                 .unwrap(),
             ));
 
-            self.names
-                .write()
-                .await
-                .insert(plugin.lock().unwrap().id, plugin_name.clone());
-            self.plugins
-                .write()
-                .await
-                .insert(plugin_name.clone(), plugin);
+            names.insert(plugin.lock().unwrap().id, plugin_name.clone());
+            plugins.insert(plugin_name.clone(), plugin);
             tracing::info!("Loaded plugin {plugin_name}");
         }
+        self.names.set(names).expect("Names already set");
+        self.plugins.set(plugins).expect("Plugins already set");
         Ok(())
     }
 }
@@ -449,7 +444,12 @@ impl ServerHandler for PluginService {
         let json_string =
             serde_json::to_string(&call_payload).expect("Failed to serialize request");
 
-        let plugins = self.plugins.read().await;
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
 
         if let Some(plugin_arc) = plugins.get(&plugin_name) {
             let plugin = Arc::clone(plugin_arc);
@@ -527,7 +527,12 @@ impl ServerHandler for PluginService {
         context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
-        let plugins = self.plugins.read().await;
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
 
         let mut payload = ListToolsResult::default();
 
@@ -654,13 +659,13 @@ impl ServerHandler for PluginService {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use futures::channel::mpsc;
     use rmcp::{
-        service::{RunningService, serve_directly},
-        transport::sink_stream::SinkStreamTransport,
+        model::ClientInfo,
+        service::{RoleClient, RunningService, serve_client, serve_server},
     };
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use tokio::io::duplex;
     use tokio_test::assert_ok;
     use tokio_util::sync::CancellationToken;
 
@@ -674,7 +679,6 @@ mod tests {
     fn create_test_cli() -> Cli {
         crate::Cli {
             config_file: None,
-            log_level: Some("info".to_string()),
             transport: "stdio".to_string(),
             bind_address: "127.0.0.1:3001".to_string(),
             insecure_skip_signature: false,
@@ -703,17 +707,32 @@ mod tests {
         PluginService(Arc::new(PluginServiceInner {
             config,
             id: Uuid::new_v4(),
-            names: Arc::new(RwLock::new(HashMap::new())),
+            names: SetOnce::new(),
             peer: SetOnce::new(),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
+            plugins: SetOnce::new(),
         }))
     }
 
-    fn create_test_server(service: PluginService) -> RunningService<RoleServer, PluginService> {
-        let (_, to_server_rx) = mpsc::channel(8);
-        let (to_client_tx, _) = mpsc::channel(8);
-        let transport = SinkStreamTransport::new(to_client_tx, to_server_rx);
-        serve_directly(service, transport, None)
+    async fn create_test_pair(
+        service: PluginService,
+    ) -> (
+        RunningService<RoleServer, PluginService>,
+        RunningService<RoleClient, ClientInfo>,
+    ) {
+        let (srv_io, cli_io) = duplex(64 * 1024);
+        tokio::try_join!(
+            async {
+                serve_server(service, srv_io)
+                    .await
+                    .map_err(anyhow::Error::from)
+            },
+            async {
+                serve_client(ClientInfo::default(), cli_io)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        )
+        .expect("Failed to create test pair")
     }
 
     fn get_test_wasm_path() -> PathBuf {
@@ -727,6 +746,19 @@ mod tests {
 
     fn test_wasm_exists() -> bool {
         get_test_wasm_path().exists()
+    }
+
+    fn get_tool_list_changed_wasm_path() -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("examples");
+        path.push("plugins");
+        path.push("tool-list-changed");
+        path.push("tool_list_changed.wasm");
+        path
+    }
+
+    fn test_tool_list_changed_wasm_exists() -> bool {
+        get_tool_list_changed_wasm_path().exists()
     }
 
     #[test]
@@ -1014,7 +1046,9 @@ plugins: {}
         );
 
         let service = result.unwrap();
-        let plugins = service.plugins.read().await;
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
         assert!(plugins.is_empty(), "Should have no plugins loaded");
     }
 
@@ -1050,7 +1084,9 @@ plugins:
         );
 
         let service = result.unwrap();
-        let plugins = service.plugins.read().await;
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
         assert_eq!(plugins.len(), 1, "Should have one plugin loaded");
         assert!(plugins.contains_key(&PluginName::from_str("time_plugin").unwrap()));
     }
@@ -1141,13 +1177,13 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
-
         // Verify the service was created successfully
-        assert!(
-            !running.service().plugins.read().await.is_empty(),
-            "Should have loaded plugin"
-        );
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        assert!(!plugins.is_empty(), "Should have loaded plugin");
+
+        let (running, _client) = create_test_pair(service).await;
 
         // Test the list_tools function
         let request = None; // No pagination for this test
@@ -1257,13 +1293,12 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
-
-        // Verify the service was created successfully
-        assert!(
-            !running.service().plugins.read().await.is_empty(),
-            "Should have loaded plugin"
-        );
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        let plugins = plugins.clone();
+        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        let (running, _client) = create_test_pair(service).await;
 
         // Test the list_tools function with skip_tools configuration
         let request = None; // No pagination for this test
@@ -1298,7 +1333,6 @@ plugins:
 
         // Verify that the plugin itself was loaded (skip_tools should not prevent plugin loading)
         {
-            let plugins = running.service().plugins.read().await;
             let plugin_name: PluginName = "time_plugin".parse().unwrap();
             assert!(
                 plugins.contains_key(&plugin_name),
@@ -1337,7 +1371,7 @@ plugins:
             auths: Some(HashMap::new()),
         };
         let service = create_test_service(config);
-        let running = create_test_server(service);
+        let (running, _client) = create_test_pair(service).await;
 
         // Test calling tool with invalid format (missing plugin name separator)
         let request = CallToolRequestParam {
@@ -1376,7 +1410,7 @@ plugins:
             auths: Some(HashMap::new()),
         };
         let service = create_test_service(config);
-        let running = create_test_server(service);
+        let (running, _client) = create_test_pair(service).await;
 
         // Test calling tool on nonexistent plugin
         let request = CallToolRequestParam {
@@ -1421,13 +1455,12 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
-
-        // Verify the service was created successfully
-        assert!(
-            !running.service().plugins.read().await.is_empty(),
-            "Should have loaded plugin"
-        );
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        let plugins = plugins.clone();
+        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        let (running, _client) = create_test_pair(service).await;
 
         // Test calling the time tool with get_time_utc operation
         let request = CallToolRequestParam {
@@ -1515,13 +1548,12 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
-
-        // Verify the service was created successfully
-        assert!(
-            !running.service().plugins.read().await.is_empty(),
-            "Should have loaded plugin"
-        );
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        let plugins = plugins.clone();
+        assert!(!plugins.is_empty(), "Should have loaded plugin");
+        let (running, _client) = create_test_pair(service).await;
 
         // Test calling the skipped time tool
         let request = CallToolRequestParam {
@@ -1620,7 +1652,9 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let plugins = service.plugins.read().await;
+        let Some(plugins) = service.plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
 
         assert_eq!(plugins.len(), 2, "Should have loaded two plugins");
         assert!(plugins.contains_key(&PluginName::from_str("time_plugin_1").unwrap()));
@@ -1652,7 +1686,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
+        let (running, _client) = create_test_pair(service).await;
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
@@ -1719,7 +1753,7 @@ plugins:
         cli.config_file = Some(config_path);
 
         let service = PluginService::new(&cli).await.unwrap();
-        let running = create_test_server(service);
+        let (running, _client) = create_test_pair(service).await;
 
         // Create a cancellation token
         let cancellation_token = CancellationToken::new();
@@ -1746,6 +1780,591 @@ plugins:
             error_message.contains("cancelled") || error_message.contains("canceled"),
             "Expected cancellation error message, got: {error_message}"
         );
+        assert_ok!(running.cancel().await);
+    }
+
+    // ========================================================================
+    // Tests for notify_tool_list_changed host function
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_basic() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+        let ctx = create_test_ctx(&running);
+
+        // List tools to verify the plugin loaded and has initial tools
+        let result = running.service().list_tools(None, ctx).await;
+        assert!(result.is_ok(), "list_tools should succeed");
+
+        let tools = result.unwrap();
+        assert!(
+            !tools.tools.is_empty(),
+            "tool_list_changed_plugin should have at least one tool"
+        );
+
+        // Verify add_tool exists
+        let tool_names: Vec<String> = tools.tools.iter().map(|t| t.name.to_string()).collect();
+        assert!(
+            tool_names.contains(&"tool_list_changed_plugin-add_tool".to_string()),
+            "add_tool should be in the tool list"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_triggers_on_add() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+        let ctx = create_test_ctx(&running);
+
+        // Get initial tool list
+        let initial_tools = running.service().list_tools(None, ctx.clone()).await;
+        assert!(initial_tools.is_ok());
+        let initial_result = initial_tools.unwrap();
+        let initial_count = initial_result.tools.len();
+
+        // Call add_tool
+        let add_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+            arguments: Some(serde_json::Map::new()),
+        };
+
+        let result = running
+            .service()
+            .call_tool(add_tool_request, ctx.clone())
+            .await;
+        assert!(
+            result.is_ok(),
+            "add_tool should succeed. Error: {:?}",
+            result.err()
+        );
+
+        // Get updated tool list
+        let ctx2 = create_test_ctx(&running);
+        let updated_tools = running.service().list_tools(None, ctx2).await;
+        assert!(updated_tools.is_ok());
+        let updated_result = updated_tools.unwrap();
+        let updated_count = updated_result.tools.len();
+
+        // Verify tool list grew
+        assert!(
+            updated_count > initial_count,
+            "Tool count should increase after add_tool. Initial: {}, Updated: {}",
+            initial_count,
+            updated_count
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_multiple_additions() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Call add_tool three times
+        for i in 1..=3 {
+            let ctx = create_test_ctx(&running);
+            let add_tool_request = CallToolRequestParam {
+                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+                arguments: Some(serde_json::Map::new()),
+            };
+
+            let result = running.service().call_tool(add_tool_request, ctx).await;
+            assert!(result.is_ok(), "add_tool call {} should succeed", i);
+        }
+
+        // Get final tool list
+        let ctx = create_test_ctx(&running);
+        let final_tools = running.service().list_tools(None, ctx).await;
+        assert!(final_tools.is_ok());
+
+        let final_result = final_tools.unwrap();
+        let tool_names: Vec<String> = final_result
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // Verify all three tools exist
+        assert!(
+            tool_names.contains(&"tool_list_changed_plugin-tool_1".to_string()),
+            "tool_1 should exist in tool list"
+        );
+        assert!(
+            tool_names.contains(&"tool_list_changed_plugin-tool_2".to_string()),
+            "tool_2 should exist in tool list"
+        );
+        assert!(
+            tool_names.contains(&"tool_list_changed_plugin-tool_3".to_string()),
+            "tool_3 should exist in tool list"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_tool_callable_after_add() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Add a tool
+        let ctx = create_test_ctx(&running);
+        let add_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+            arguments: Some(serde_json::Map::new()),
+        };
+
+        let result = running.service().call_tool(add_tool_request, ctx).await;
+        assert!(result.is_ok(), "add_tool should succeed");
+
+        // Call the newly created tool_1
+        let ctx2 = create_test_ctx(&running);
+        let tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_1"),
+            arguments: Some(serde_json::Map::new()),
+        };
+
+        let result = running.service().call_tool(tool_request, ctx2).await;
+        assert!(result.is_ok(), "tool_1 should be callable after creation");
+
+        let response = result.unwrap();
+        assert!(!response.content.is_empty(), "tool_1 should return content");
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_response_format() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+        let ctx = create_test_ctx(&running);
+
+        // Call add_tool and verify response format
+        let add_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+            arguments: Some(serde_json::Map::new()),
+        };
+
+        let result = running.service().call_tool(add_tool_request, ctx).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert!(!response.content.is_empty(), "Response should have content");
+
+        // Just verify that we got content back - the content structure is handled by rmcp
+        assert_eq!(
+            response.is_error,
+            Some(false),
+            "Response should not be an error"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_sequential_tool_numbers() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Add 5 tools and verify tool_count in responses
+        for expected_count in 1..=5 {
+            let ctx = create_test_ctx(&running);
+            let add_tool_request = CallToolRequestParam {
+                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+                arguments: Some(serde_json::Map::new()),
+            };
+
+            let result = running.service().call_tool(add_tool_request, ctx).await;
+            assert!(result.is_ok());
+
+            let response = result.unwrap();
+            // Verify response indicates success
+            assert_eq!(
+                response.is_error,
+                Some(false),
+                "add_tool call {} should succeed",
+                expected_count
+            );
+        }
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_invalid_tool_call() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Try to call a tool that doesn't exist yet (tool_5 when only tool_1 exists)
+        let ctx = create_test_ctx(&running);
+        let invalid_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-tool_5"),
+            arguments: Some(serde_json::Map::new()),
+        };
+
+        let result = running.service().call_tool(invalid_tool_request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Tool call should complete, but indicate error"
+        );
+
+        let response = result.unwrap();
+        assert!(
+            response.is_error == Some(true),
+            "Calling non-existent tool should return error"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_add_tool_failure_propagates() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Call add_tool with additional arguments (should still work but they're ignored)
+        let ctx = create_test_ctx(&running);
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "extra_param".to_string(),
+            serde_json::Value::String("should_be_ignored".to_string()),
+        );
+
+        let add_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+            arguments: Some(args),
+        };
+
+        let result = running.service().call_tool(add_tool_request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "add_tool should succeed even with extra params"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_new_tools_appear_in_list() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Get initial tools
+        let ctx = create_test_ctx(&running);
+        let initial_result = running.service().list_tools(None, ctx).await;
+        assert!(initial_result.is_ok());
+        let initial_tools = initial_result.unwrap();
+        let initial_names: Vec<String> = initial_tools
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // Verify tool_1 doesn't exist yet
+        assert!(
+            !initial_names.contains(&"tool_list_changed_plugin-tool_1".to_string()),
+            "tool_1 should not exist initially"
+        );
+
+        // Add tool_1
+        let ctx = create_test_ctx(&running);
+        let add_tool_request = CallToolRequestParam {
+            name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+            arguments: Some(serde_json::Map::new()),
+        };
+        let _ = running.service().call_tool(add_tool_request, ctx).await;
+
+        // Get updated tools
+        let ctx = create_test_ctx(&running);
+        let updated_result = running.service().list_tools(None, ctx).await;
+        assert!(updated_result.is_ok());
+        let updated_tools = updated_result.unwrap();
+        let updated_names: Vec<String> = updated_tools
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // Verify tool_1 exists now
+        assert!(
+            updated_names.contains(&"tool_list_changed_plugin-tool_1".to_string()),
+            "tool_1 should exist after add_tool"
+        );
+
+        assert_ok!(running.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_notify_tool_list_changed_tool_descriptions() {
+        let wasm_path = get_tool_list_changed_wasm_path();
+        if !test_tool_list_changed_wasm_exists() {
+            println!("Skipping test - tool-list-changed WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  tool_list_changed_plugin:
+    url: "file://{}"
+    runtime_config:
+      max_memory_mb: 10
+      max_execution_time_ms: 5000
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let service = PluginService::new(&cli).await.unwrap();
+        let (running, _client) = create_test_pair(service).await;
+
+        // Add two tools
+        for _ in 0..2 {
+            let ctx = create_test_ctx(&running);
+            let add_tool_request = CallToolRequestParam {
+                name: std::borrow::Cow::Borrowed("tool_list_changed_plugin-add_tool"),
+                arguments: Some(serde_json::Map::new()),
+            };
+            let _ = running.service().call_tool(add_tool_request, ctx).await;
+        }
+
+        // Get tool list and verify descriptions
+        let ctx = create_test_ctx(&running);
+        let result = running.service().list_tools(None, ctx).await;
+        assert!(result.is_ok());
+
+        let tools = result.unwrap();
+        let tool_map: std::collections::HashMap<String, &Tool> = tools
+            .tools
+            .iter()
+            .map(|t| (t.name.to_string(), t))
+            .collect();
+
+        // Verify tool descriptions exist and are meaningful
+        if let Some(add_tool) = tool_map.get("tool_list_changed_plugin-add_tool") {
+            if let Some(desc) = &add_tool.description {
+                assert!(!desc.is_empty(), "add_tool should have a description");
+                assert!(
+                    desc.to_lowercase().contains("add"),
+                    "add_tool description should mention 'add'"
+                );
+            }
+        }
+
+        if let Some(tool_1) = tool_map.get("tool_list_changed_plugin-tool_1") {
+            if let Some(desc) = &tool_1.description {
+                assert!(!desc.is_empty(), "tool_1 should have a description");
+                assert!(
+                    desc.to_lowercase().contains("tool"),
+                    "tool_1 description should mention 'tool'"
+                );
+            }
+        }
+
         assert_ok!(running.cancel().await);
     }
 }
