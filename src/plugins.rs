@@ -8,6 +8,7 @@ use anyhow::{Error, Result};
 use bytesize::ByteSize;
 use dashmap::{DashMap, Entry};
 use extism::{EXTISM_USER_MODULE, Function, Manifest, Plugin, UserData, Wasm, host_fn};
+use extism_convert::Json;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -20,7 +21,7 @@ use std::{
     fmt,
     ops::Deref,
     str::FromStr,
-    sync::{Arc, LazyLock, Mutex, Weak},
+    sync::{Arc, LazyLock, Mutex, RwLock, Weak},
 };
 use tokio::{
     runtime::Handle,
@@ -87,19 +88,6 @@ fn check_env_reference(value: &str) -> String {
     }
 }
 
-// Declares a host function `notify_tool_list_changed` that plugins can call
-host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
-    let ctx = ctx.get()?.lock().unwrap().clone();
-    let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
-        anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
-    })?;
-    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
-    match plugin_service.peer.get() {
-        Some(peer) => ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from),
-        None => Ok(()),
-    }
-});
-
 static PLUGIN_SERVICE_INNER_REGISTRY: LazyLock<DashMap<Uuid, Weak<PluginServiceInner>>> =
     LazyLock::new(DashMap::new);
 static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
@@ -114,6 +102,7 @@ struct PluginServiceContext {
 pub struct PluginServiceInner {
     config: Config,
     id: Uuid,
+    logging_level: RwLock<LoggingLevel>,
     names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: SetOnce<HashMap<PluginName, Arc<Mutex<Plugin>>>>,
@@ -158,6 +147,7 @@ impl PluginService {
         let inner = Arc::new(PluginServiceInner {
             config: load_config(config_path).await?,
             id: Uuid::new_v4(),
+            logging_level: RwLock::new(LoggingLevel::Error),
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
@@ -179,28 +169,6 @@ impl PluginService {
         None
     }
 
-    /*/
-    fn get_plugin_by_id(&self, plugin_id: Uuid) -> Option<Arc<Mutex<Plugin>>> {
-        if let Some(plugin_name) = self.get_plugin_name(plugin_id) {
-            return self.get_plugin_by_name(plugin_name);
-        }
-        None
-    }
-
-    fn get_plugin_by_name(&self, plugin_name: PluginName) -> Option<Arc<Mutex<Plugin>>> {
-        self.plugins
-            .blocking_read()
-            .get(&plugin_name)
-            .map(|p| Arc::clone(p))
-    }
-
-    fn get_plugin_name(&self, plugin_id: Uuid) -> Option<PluginName> {
-        self.names
-            .get()
-            .and_then(|names| names.get(&plugin_id).cloned())
-    }
-    */
-
     async fn load_plugins(&self, cli: &Cli) -> Result<()> {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
@@ -208,6 +176,33 @@ impl PluginService {
 
         let mut names = HashMap::new();
         let mut plugins = HashMap::new();
+
+        // Declares a host function `notify_logging_message` that plugins can call
+        host_fn!(notify_logging_message(ctx: PluginServiceContext; message: Json<LoggingMessageNotificationParam>) {
+            let message = message.into_inner();
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            if (plugin_service.logging_level() as u8) <= (message.level as u8) && let Some(peer) = plugin_service.peer.get() {
+                tracing::debug!("Logging message from {}", ctx.plugin_name);
+                return ctx.handle.block_on(peer.notify_logging_message(message)).map_err(Error::from);
+            }
+            Ok(())
+        });
+
+        // Declares a host function `notify_tool_list_changed` that plugins can call
+        host_fn!(notify_tool_list_changed(ctx: PluginServiceContext;) {
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+            match plugin_service.peer.get() {
+                Some(peer) => ctx.handle.block_on(peer.notify_tool_list_changed()).map_err(Error::from),
+                None => Ok(()),
+            }
+        });
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
             let wasm_content = match WASM_CONTENT_CACHE.entry(plugin_name.clone()) {
@@ -360,18 +355,31 @@ impl PluginService {
             let plugin = Arc::new(Mutex::new(
                 Plugin::new(
                     &manifest,
-                    [Function::new(
-                        "notify_tool_list_changed",
-                        [],
-                        [],
-                        UserData::new(PluginServiceContext {
-                            plugin_service_id: self.id,
-                            handle: Handle::current(),
-                            plugin_name: plugin_name.to_string(),
-                        }),
-                        notify_tool_list_changed,
-                    )
-                    .with_namespace(EXTISM_USER_MODULE)],
+                    [
+                        Function::new(
+                            "notify_logging_message",
+                            [extism::PTR],
+                            [],
+                            UserData::new(PluginServiceContext {
+                                plugin_service_id: self.id,
+                                handle: Handle::current(),
+                                plugin_name: plugin_name.to_string(),
+                            }),
+                            notify_logging_message,
+                        ),
+                        Function::new(
+                            "notify_tool_list_changed",
+                            [],
+                            [],
+                            UserData::new(PluginServiceContext {
+                                plugin_service_id: self.id,
+                                handle: Handle::current(),
+                                plugin_name: plugin_name.to_string(),
+                            }),
+                            notify_tool_list_changed,
+                        )
+                        .with_namespace(EXTISM_USER_MODULE),
+                    ],
                     true,
                 )
                 .unwrap(),
@@ -385,25 +393,17 @@ impl PluginService {
         self.plugins.set(plugins).expect("Plugins already set");
         Ok(())
     }
+
+    pub fn logging_level(&self) -> LoggingLevel {
+        *self.logging_level.read().unwrap()
+    }
+
+    pub fn set_logging_level(&self, level: LoggingLevel) {
+        *self.logging_level.write().unwrap() = level;
+    }
 }
 
 impl ServerHandler for PluginService {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            server_info: Implementation {
-                name: "hyper-mcp".to_string(),
-                title: Some("Hyper MCP".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                website_url: Some("https://github.com/tuananh/hyper-mcp".to_string()),
-
-                ..Default::default()
-            },
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-
-            ..Default::default()
-        }
-    }
-
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
@@ -519,6 +519,26 @@ impl ServerHandler for PluginService {
         }
 
         Err(McpError::method_not_found::<CallToolRequestMethod>())
+    }
+
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            server_info: Implementation {
+                name: "hyper-mcp".to_string(),
+                title: Some("Hyper MCP".to_string()),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                website_url: Some("https://github.com/tuananh/hyper-mcp".to_string()),
+
+                ..Default::default()
+            },
+            capabilities: ServerCapabilities::builder()
+                .enable_logging()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+
+            ..Default::default()
+        }
     }
 
     async fn list_tools(
@@ -653,6 +673,15 @@ impl ServerHandler for PluginService {
         self.peer.set(context.peer).expect("Peer already set");
         std::future::ready(())
     }
+
+    fn set_level(
+        &self,
+        request: SetLevelRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+        self.set_logging_level(request.level);
+        std::future::ready(Ok(()))
+    }
 }
 
 #[cfg(test)]
@@ -753,6 +782,7 @@ mod tests {
         PluginService(Arc::new(PluginServiceInner {
             config,
             id: Uuid::new_v4(),
+            logging_level: RwLock::new(LoggingLevel::Info),
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),

@@ -2576,6 +2576,7 @@ dependencies = [
  "dirs 6.0.0",
  "docker_credential",
  "extism",
+ "extism-convert",
  "flate2",
  "futures",
  "hex",
