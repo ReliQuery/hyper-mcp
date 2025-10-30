@@ -502,6 +502,25 @@ impl PluginService {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
+        host_fn!(create_message(ctx:PluginServiceContext; sampling_message: Json<CreateMessageRequestParam>) -> Json<CreateMessageResult> {
+            let sampling_message = sampling_message.into_inner();
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            match plugin_service.peer.get() {
+                Some(peer) => {
+                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
+                        tracing::info!("Creating message from {}", ctx.plugin_name);
+                        ctx.handle.block_on(peer.create_message(sampling_message)).map(Json).map_err(Error::from)
+                    } else {
+                        Err(anyhow::anyhow!("Peer does not support sampling"))
+                    }
+                },
+                None => Err(anyhow::anyhow!("No peer available")),
+            }
+        });
+
         // Declares a host function `list_roots` that plugins can call
         host_fn!(list_roots(ctx: PluginServiceContext;) -> Json<ListRootsResult> {
             let ctx = ctx.get()?.lock().unwrap().clone();
@@ -517,7 +536,7 @@ impl PluginService {
                         Ok(Json(ListRootsResult::default()))
                     }
                 },
-                None => Ok(Json(ListRootsResult::default())),
+                None => Err(anyhow::anyhow!("No peer available")),
             }
         });
 
@@ -748,6 +767,17 @@ impl PluginService {
             let extism_plugin = extism::Plugin::new(
                 &manifest,
                 [
+                    Function::new(
+                        "create_message",
+                        [extism::PTR],
+                        [extism::PTR],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        create_message,
+                    ),
                     Function::new(
                         "list_roots",
                         [],
