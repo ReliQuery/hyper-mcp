@@ -15,7 +15,7 @@ use rmcp::{
     model::*,
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -29,39 +29,40 @@ use tokio::{
     runtime::Handle,
     sync::{OnceCell, SetOnce},
 };
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-pub struct ToolNameParseError;
+pub struct NamespacedNameParseError;
 
-impl fmt::Display for ToolNameParseError {
+impl fmt::Display for NamespacedNameParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Failed to parse tool name")
+        write!(f, "Failed to parse name")
     }
 }
 
-impl std::error::Error for ToolNameParseError {}
+impl std::error::Error for NamespacedNameParseError {}
 
-impl From<PluginNameParseError> for ToolNameParseError {
+impl From<PluginNameParseError> for NamespacedNameParseError {
     fn from(_: PluginNameParseError) -> Self {
-        ToolNameParseError
+        NamespacedNameParseError
     }
 }
 
-fn create_namespaced_tool_name(
+fn create_namespaced_name(
     plugin_name: &PluginName,
-    tool_name: &str,
-) -> Result<String, ToolNameParseError> {
-    Ok(format!("{plugin_name}-{tool_name}"))
+    name: &str,
+) -> Result<String, NamespacedNameParseError> {
+    Ok(format!("{plugin_name}-{name}"))
 }
 
-fn parse_namespaced_tool_name(
-    tool_name: std::borrow::Cow<'static, str>,
-) -> Result<(PluginName, String), ToolNameParseError> {
-    if let Some((plugin_name, tool_name)) = tool_name.split_once("-") {
+fn parse_namespaced_name(
+    namespaced_name: String,
+) -> Result<(PluginName, String), NamespacedNameParseError> {
+    if let Some((plugin_name, tool_name)) = namespaced_name.split_once("-") {
         return Ok((PluginName::from_str(plugin_name)?, tool_name.to_string()));
     }
-    Err(ToolNameParseError)
+    Err(NamespacedNameParseError)
 }
 
 /// Check if a value contains an environment variable reference in the format ${ENVVARKEY}
@@ -133,11 +134,29 @@ trait Plugin: Send + Sync + Debug {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError>;
 
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        Err(McpError::method_not_found::<GetPromptRequestMethod>())
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult::default())
+    }
+
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError>;
+
+    fn name(&self) -> &PluginName;
 
     async fn on_roots_list_changed(
         &self,
@@ -145,6 +164,113 @@ trait Plugin: Send + Sync + Debug {
     ) -> Result<(), McpError> {
         Ok(())
     }
+
+    fn plugin(&self) -> &PluginHandle;
+}
+
+async fn call_plugin<R>(
+    self_: &dyn Plugin,
+    name: &str,
+    payload: String,
+    ct: CancellationToken,
+) -> Result<R, McpError>
+where
+    R: DeserializeOwned + Send + 'static,
+{
+    let plugin = Arc::clone(self_.plugin());
+    let plugin_name = self_.name().to_string();
+    if !plugin.lock().unwrap().function_exists(name) {
+        return Err(McpError::invalid_request(
+            format!("Method {name} not found for plugin {plugin_name}"),
+            None,
+        ));
+    }
+    let cancel_handle = {
+        let guard = plugin.lock().unwrap();
+        guard.cancel_handle()
+    };
+
+    let name = name.to_string();
+    let mut join = tokio::task::spawn_blocking(move || {
+        let mut plugin = plugin.lock().unwrap();
+        let result: Result<String, extism::Error> = plugin.call(&name, payload);
+        match result {
+            Ok(res) => match serde_json::from_str::<R>(&res) {
+                Ok(parsed) => Ok(parsed),
+                Err(e) => Err(McpError::internal_error(
+                    format!("Failed to deserialize data: {e}"),
+                    None,
+                )),
+            },
+            Err(e) => Err(McpError::internal_error(
+                format!("Failed to call plugin: {e}"),
+                None,
+            )),
+        }
+    });
+
+    tokio::select! {
+        // Finished normally
+        res = &mut join => {
+            return match res {
+                Ok(Ok(result)) => Ok(result),
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(McpError::internal_error(
+                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                    None,
+                )),
+            };
+        }
+
+        //Cancellation requested
+        _ = ct.cancelled() => {
+            if let Err(e) = cancel_handle.cancel() {
+                tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
+                return Err(McpError::internal_error(
+                    format!("Failed to cancel plugin {plugin_name}: {e}"),
+                    None,
+                ));
+            }
+            return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
+                Ok(Ok(Ok(_))) => Err(McpError::internal_error(
+                    format!("Plugin {plugin_name} was cancelled"),
+                    None,
+                )),
+                Ok(Ok(Err(e))) => Err(McpError::internal_error(
+                    format!("Failed to execute plugin {plugin_name}: {e}"),
+                    None,
+                )),
+                Ok(Err(e)) => Err(McpError::internal_error(
+                    format!("Join error for plugin {plugin_name}: {e}"),
+                    None,
+                )),
+                Err(_) => Err(McpError::internal_error(
+                    format!("Timeout waiting for plugin {plugin_name} to cancel"),
+                    None,
+                )),
+            };
+        }
+    }
+}
+
+async fn notify_plugin(self_: &dyn Plugin, name: &str, payload: String) -> Result<(), McpError> {
+    let plugin = Arc::clone(self_.plugin());
+    let plugin_name = self_.name().to_string();
+    if !plugin.lock().unwrap().function_exists(name) {
+        return Err(McpError::invalid_request(
+            format!("Method {name} not found for plugin {plugin_name}"),
+            None,
+        ));
+    }
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut plugin = plugin.lock().unwrap();
+        let result: Result<String, extism::Error> = plugin.call(&name, payload);
+        if let Err(e) = result {
+            tracing::error!("Failed to notify plugin {plugin_name}: {e}");
+        }
+    });
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -160,73 +286,16 @@ impl Plugin for LegacyPlugin {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let call_payload = serde_json::to_string(&json!({
-            "params": request,
-        }))
-        .expect("Failed to serialize request");
-        let plugin = Arc::clone(&self.plugin);
-        let plugin_name = self.name.clone();
-        let cancel_handle = {
-            let guard = plugin.lock().unwrap();
-            guard.cancel_handle()
-        };
-        let mut join = tokio::task::spawn_blocking(move || {
-            let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("call", &call_payload)
-        });
-
-        tokio::select! {
-            // Finished normally
-            res = &mut join => {
-                return match res {
-                    Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                        Ok(parsed) => Ok(parsed),
-                        Err(e) => Err(McpError::internal_error(
-                            format!("Failed to deserialize data: {e}"),
-                            None,
-                        )),
-                    },
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Failed to execute plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(e) => Err(McpError::internal_error(
-                        format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                };
-            }
-
-            //Cancellation requested
-            _ = context.ct.cancelled() => {
-                if let Err(e) = cancel_handle.cancel() {
-                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
-                    return Err(McpError::internal_error(
-                        format!("Failed to cancel plugin {plugin_name}: {e}"),
-                        None,
-                    ));
-                }
-
-                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
-                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
-                        format!("Plugin {plugin_name} was cancelled"),
-                        None,
-                    )),
-                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
-                        format!("Failed to execute plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Join error for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(_) => Err(McpError::internal_error(
-                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
-                        None,
-                    )),
-                };
-            }
-        }
+        call_plugin::<CallToolResult>(
+            self,
+            "call",
+            serde_json::to_string(&json!({
+                "params": request,
+            }))
+            .expect("Failed to serialize request"),
+            context.ct,
+        )
+        .await
     }
 
     async fn list_tools(
@@ -234,75 +303,15 @@ impl Plugin for LegacyPlugin {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let plugin = Arc::clone(&self.plugin);
-        let cancel_handle = {
-            let guard = plugin.lock().unwrap();
-            guard.cancel_handle()
-        };
-        let mut join = tokio::task::spawn_blocking(move || {
-            let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("describe", "")
-        });
-        let plugin_name = self.name.clone();
-        tokio::select! {
-            // Finished normally
-            res = &mut join => {
-                match res {
-                    Ok(Ok(result)) => {
-                        return serde_json::from_str::<ListToolsResult>(&result).map_err(|e| {
-                            McpError::internal_error(
-                                format!("Failed to deserialize data: {e}"),
-                                None,
-                            )
-                        });
-                    }
-                    Ok(Err(e)) => {
-                        tracing::error!("{plugin_name} describe() error: {e}");
-                        return Err(McpError::internal_error(
-                            format!("Failed to describe plugin {plugin_name}: {e}"),
-                            None,
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::error!("{plugin_name} spawn_blocking error: {e}");
-                        return Err(McpError::internal_error(
-                            format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                            None,
-                        ));
-                    }
-                };
-            }
+        call_plugin::<ListToolsResult>(self, "describe", "".to_string(), context.ct).await
+    }
 
-            //Cancellation requested
-            _ = context.ct.cancelled() => {
-                if let Err(e) = cancel_handle.cancel() {
-                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
-                    return Err(McpError::internal_error(
-                        format!("Failed to cancel plugin {plugin_name}: {e}"),
-                        None,
-                    ));
-                }
+    fn name(&self) -> &PluginName {
+        &self.name
+    }
 
-                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
-                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
-                        format!("Plugin {plugin_name} was cancelled"),
-                        None,
-                    )),
-                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
-                        format!("Failed to describe plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Join error for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(_) => Err(McpError::internal_error(
-                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
-                        None,
-                    )),
-                };
-            }
-        }
+    fn plugin(&self) -> &PluginHandle {
+        &self.plugin
     }
 }
 
@@ -319,78 +328,52 @@ impl Plugin for CurrentPlugin {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let plugin = Arc::clone(&self.plugin);
-        if !plugin.lock().unwrap().function_exists("call_tool") {
-            return Err(McpError::method_not_found::<CallToolRequestMethod>());
-        }
-        let plugin_name = self.name.clone();
-        let cancel_handle = {
-            let guard = plugin.lock().unwrap();
-            guard.cancel_handle()
-        };
-        let call_payload = serde_json::to_string(&json!({
-            "params": request,
-            "context": PluginRequestContext::from(&context),
-        }))
-        .expect("Failed to serialize request");
+        call_plugin::<CallToolResult>(
+            self,
+            "call_tool",
+            serde_json::to_string(&json!({
+                "request": request,
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize request"),
+            context.ct,
+        )
+        .await
+    }
 
-        let mut join = tokio::task::spawn_blocking(move || {
-            let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("call_tool", &call_payload)
-        });
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        call_plugin::<GetPromptResult>(
+            self,
+            "get_prompt",
+            serde_json::to_string(&json!({
+                "request": request,
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize request"),
+            context.ct,
+        )
+        .await
+    }
 
-        tokio::select! {
-            // Finished normally
-            res = &mut join => {
-                return match res {
-                    Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
-                        Ok(parsed) => Ok(parsed),
-                        Err(e) => Err(McpError::internal_error(
-                            format!("Failed to deserialize data: {e}"),
-                            None,
-                        )),
-                    },
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Failed to execute plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(e) => Err(McpError::internal_error(
-                        format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                };
-            }
-
-            //Cancellation requested
-            _ = context.ct.cancelled() => {
-                if let Err(e) = cancel_handle.cancel() {
-                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
-                    return Err(McpError::internal_error(
-                        format!("Failed to cancel plugin {plugin_name}: {e}"),
-                        None,
-                    ));
-                }
-
-                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
-                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
-                        format!("Plugin {plugin_name} was cancelled"),
-                        None,
-                    )),
-                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
-                        format!("Failed to execute plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Join error for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(_) => Err(McpError::internal_error(
-                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
-                        None,
-                    )),
-                };
-            }
-        }
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        call_plugin::<ListPromptsResult>(
+            self,
+            "list_prompts",
+            serde_json::to_string(&json!({
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize context"),
+            context.ct,
+        )
+        .await
     }
 
     async fn list_tools(
@@ -398,123 +381,39 @@ impl Plugin for CurrentPlugin {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let plugin = Arc::clone(&self.plugin);
-        if !plugin.lock().unwrap().function_exists("list_tools") {
-            return Ok(ListToolsResult::default());
-        }
-        let plugin_name = self.name.clone();
-        let cancel_handle = {
-            let guard = plugin.lock().unwrap();
-            guard.cancel_handle()
-        };
-        let list_tools_payload = serde_json::to_string(&json!({
-            "context": PluginRequestContext::from(&context),
-        }))
-        .expect("Failed to serialize context");
-        let mut join = tokio::task::spawn_blocking(move || {
-            let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("list_tools", &list_tools_payload)
-        });
-        tokio::select! {
-            // Finished normally
-            res = &mut join => {
-                match res {
-                    Ok(Ok(result)) => {
-                        return serde_json::from_str::<ListToolsResult>(&result).map_err(|e| {
-                            McpError::internal_error(
-                                format!("Failed to deserialize data: {e}"),
-                                None,
-                            )
-                        });
-                    }
-                    Ok(Err(e)) => {
-                        tracing::error!("{plugin_name} describe() error: {e}");
-                        return Err(McpError::internal_error(
-                            format!("Failed to describe plugin {plugin_name}: {e}"),
-                            None,
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::error!("{plugin_name} spawn_blocking error: {e}");
-                        return Err(McpError::internal_error(
-                            format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                            None,
-                        ));
-                    }
-                };
-            }
+        call_plugin::<ListToolsResult>(
+            self,
+            "list_tools",
+            serde_json::to_string(&json!({
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize context"),
+            context.ct,
+        )
+        .await
+    }
 
-            //Cancellation requested
-            _ = context.ct.cancelled() => {
-                if let Err(e) = cancel_handle.cancel() {
-                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
-                    return Err(McpError::internal_error(
-                        format!("Failed to cancel plugin {plugin_name}: {e}"),
-                        None,
-                    ));
-                }
-
-                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
-                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
-                        format!("Plugin {plugin_name} was cancelled"),
-                        None,
-                    )),
-                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
-                        format!("Failed to describe plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Ok(Err(e)) => Err(McpError::internal_error(
-                        format!("Join error for plugin {plugin_name}: {e}"),
-                        None,
-                    )),
-                    Err(_) => Err(McpError::internal_error(
-                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
-                        None,
-                    )),
-                };
-            }
-        }
+    fn name(&self) -> &PluginName {
+        &self.name
     }
 
     async fn on_roots_list_changed(
         &self,
         context: NotificationContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let plugin = Arc::clone(&self.plugin);
-        if !plugin
-            .lock()
-            .unwrap()
-            .function_exists("on_roots_list_changed")
-        {
-            return Ok(());
-        }
-        let plugin_name = self.name.clone();
-        let on_roots_list_changed_payload = serde_json::to_string(&json!({
-            "context": PluginNotificationContext::from(&context),
-        }))
-        .expect("Failed to serialize context");
-        match tokio::task::spawn_blocking(move || {
-            let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("on_roots_list_changed", &on_roots_list_changed_payload)
-        })
+        notify_plugin(
+            self,
+            "on_roots_list_changed",
+            serde_json::to_string(&json!({
+                "context": PluginNotificationContext::from(&context),
+            }))
+            .expect("Failed to serialize context"),
+        )
         .await
-        {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => {
-                tracing::error!("Plugin {plugin_name} on_roots_list_changed() error: {e}");
-                Err(McpError::internal_error(
-                    format!("Failed to notify plugin {plugin_name}: {e}"),
-                    None,
-                ))
-            }
-            Err(e) => {
-                tracing::error!("Plugin {plugin_name} spawn_blocking error: {e}");
-                Err(McpError::internal_error(
-                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
-                    None,
-                ))
-            }
-        }
+    }
+
+    fn plugin(&self) -> &PluginHandle {
+        &self.plugin
     }
 }
 
@@ -957,7 +856,7 @@ impl ServerHandler for PluginService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!("got tools/call request {:?}", request);
-        let (plugin_name, tool_name) = match parse_namespaced_tool_name(request.name) {
+        let (plugin_name, tool_name) = match parse_namespaced_name(request.name.to_string()) {
             Ok((plugin_name, tool_name)) => (plugin_name, tool_name),
             Err(e) => {
                 return Err(McpError::invalid_request(
@@ -1025,11 +924,119 @@ impl ServerHandler for PluginService {
         }
     }
 
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        tracing::info!("got prompts/get request {:?}", request);
+        let (plugin_name, prompt_name) = match parse_namespaced_name(request.name.to_string()) {
+            Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
+            Err(e) => {
+                return Err(McpError::invalid_request(
+                    format!("Failed to parse prompt name: {e}"),
+                    None,
+                ));
+            }
+        };
+        let plugin_config = match self.config.plugins.get(&plugin_name) {
+            Some(config) => config,
+            None => {
+                return Err(McpError::method_not_found::<GetPromptRequestMethod>());
+            }
+        };
+        if let Some(skip_prompts) = &plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_prompts.clone())
+            && skip_prompts.is_match(&prompt_name)
+        {
+            tracing::warn!("Tool {prompt_name} in skip_prompts");
+            return Err(McpError::method_not_found::<GetPromptRequestMethod>());
+        }
+
+        let request = GetPromptRequestParam {
+            name: prompt_name.clone(),
+            arguments: request.arguments,
+        };
+
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let Some(plugin) = plugins.get(&plugin_name) else {
+            return Err(McpError::method_not_found::<GetPromptRequestMethod>());
+        };
+        plugin.get_prompt(request, context).await
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        tracing::info!("got prompts/list request {:?}", request);
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let mut list_prompts_result = ListPromptsResult::default();
+
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_prompts = plugin
+                .list_prompts(request.clone(), context.clone())
+                .await?;
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_prompts = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_prompts.clone())
+                .unwrap_or_default();
+            for prompt in plugin_prompts.prompts {
+                let prompt_name = prompt.name.as_ref() as &str;
+                if skip_prompts.is_match(prompt_name) {
+                    tracing::info!(
+                        "Skipping prompt {} as requested in skip_prompts",
+                        prompt.name
+                    );
+                    continue;
+                }
+                let namespaced_prompt_name = create_namespaced_name(plugin_name, &prompt.name)
+                    .map_err(|e| {
+                        McpError::internal_error(
+                            format!("Failed to create namespaced prompt name: {e}"),
+                            None,
+                        )
+                    })?;
+                list_prompts_result.prompts.push(Prompt {
+                    arguments: prompt.arguments,
+                    name: namespaced_prompt_name,
+                    title: prompt.title,
+                    description: prompt.description,
+                    icons: prompt.icons,
+                });
+            }
+        }
+
+        Ok(list_prompts_result)
+    }
+
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
-    ) -> std::result::Result<ListToolsResult, McpError> {
+    ) -> Result<ListToolsResult, McpError> {
         tracing::info!("got tools/list request {:?}", request);
         let Some(plugins) = self.plugins.get() else {
             return Err(McpError::internal_error(
@@ -1038,7 +1045,7 @@ impl ServerHandler for PluginService {
             ));
         };
 
-        let mut payload = ListToolsResult::default();
+        let mut list_tools_result = ListToolsResult::default();
 
         for (plugin_name, plugin) in plugins.iter() {
             let plugin_tools = plugin.list_tools(request.clone(), context.clone()).await?;
@@ -1059,14 +1066,14 @@ impl ServerHandler for PluginService {
                     tracing::info!("Skipping tool {} as requested in skip_tools", tool.name);
                     continue;
                 }
-                let namespaced_tool_name = create_namespaced_tool_name(plugin_name, &tool.name)
+                let namespaced_tool_name = create_namespaced_name(plugin_name, &tool.name)
                     .map_err(|e| {
                         McpError::internal_error(
                             format!("Failed to create namespaced tool name: {e}"),
                             None,
                         )
                     })?;
-                payload.tools.push(Tool {
+                list_tools_result.tools.push(Tool {
                     name: std::borrow::Cow::Owned(namespaced_tool_name),
                     title: tool.title,
                     description: tool.description,
@@ -1078,7 +1085,7 @@ impl ServerHandler for PluginService {
             }
         }
 
-        Ok(payload)
+        Ok(list_tools_result)
     }
 
     fn on_initialized(
@@ -1274,7 +1281,7 @@ mod tests {
         let tool_name = "example_tool";
         let expected = "example_plugin-example_tool";
         assert_eq!(
-            create_namespaced_tool_name(&plugin_name, tool_name).unwrap(),
+            create_namespaced_name(&plugin_name, tool_name).unwrap(),
             expected
         );
     }
@@ -1282,7 +1289,7 @@ mod tests {
     #[test]
     fn test_parse_tool_name() {
         let tool_name = "example_plugin-example_tool".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        let result = parse_namespaced_name(tool_name);
         assert!(result.is_ok());
         let (plugin_name, tool) = result.unwrap();
         assert_eq!(plugin_name.as_str(), "example_plugin");
@@ -1293,7 +1300,7 @@ mod tests {
     fn test_create_tool_name_invalid() {
         let plugin_name = PluginName::from_str("example_plugin").unwrap();
         let tool_name = "invalid-tool";
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "example_plugin-invalid-tool");
     }
 
@@ -1301,7 +1308,7 @@ mod tests {
     fn test_create_namespaced_tool_name_with_special_chars() {
         let plugin_name = PluginName::from_str("test_plugin_123").unwrap();
         let tool_name = "tool_name_with_underscores";
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "test_plugin_123-tool_name_with_underscores");
     }
 
@@ -1309,7 +1316,7 @@ mod tests {
     fn test_create_namespaced_tool_name_empty_tool_name() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "";
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "test_plugin-");
     }
 
@@ -1317,14 +1324,14 @@ mod tests {
     fn test_create_namespaced_tool_name_multiple_hyphens() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "invalid-tool-name";
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "test_plugin-invalid-tool-name");
     }
 
     #[test]
     fn test_parse_namespaced_tool_name_with_special_chars() {
         let tool_name = "plugin_name_123-tool_name_456".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name)).unwrap();
+        let result = parse_namespaced_name(tool_name).unwrap();
         assert_eq!(result.0.as_str(), "plugin_name_123");
         assert_eq!(result.1, "tool_name_456");
     }
@@ -1332,15 +1339,15 @@ mod tests {
     #[test]
     fn test_parse_namespaced_tool_name_no_separator() {
         let tool_name = "invalid_tool_name".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        let result = parse_namespaced_name(tool_name);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ToolNameParseError));
+        assert!(matches!(result.unwrap_err(), NamespacedNameParseError));
     }
 
     #[test]
     fn test_parse_namespaced_tool_name_multiple_separators() {
         let tool_name = "plugin-tool-extra".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name)).unwrap();
+        let result = parse_namespaced_name(tool_name).unwrap();
         assert_eq!(result.0.as_str(), "plugin");
         assert_eq!(result.1, "tool-extra");
     }
@@ -1348,7 +1355,7 @@ mod tests {
     #[test]
     fn test_parse_namespaced_tool_name_empty_parts() {
         let tool_name = "-tool".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        let result = parse_namespaced_name(tool_name);
         // This should still work but with empty plugin name
         if result.is_ok() {
             let (plugin, _) = result.unwrap();
@@ -1359,7 +1366,7 @@ mod tests {
     #[test]
     fn test_parse_namespaced_tool_name_only_separator() {
         let tool_name = "-".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        let result = parse_namespaced_name(tool_name);
         // Should result in empty plugin and tool names
         if let Ok((plugin, tool)) = result {
             assert!(plugin.as_str().is_empty());
@@ -1370,21 +1377,21 @@ mod tests {
     #[test]
     fn test_parse_namespaced_tool_name_empty_string() {
         let tool_name = "".to_string();
-        let result = parse_namespaced_tool_name(std::borrow::Cow::Owned(tool_name));
+        let result = parse_namespaced_name(tool_name);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_tool_name_parse_error_display() {
-        let error = ToolNameParseError;
-        assert_eq!(format!("{error}"), "Failed to parse tool name");
+        let error = NamespacedNameParseError;
+        assert_eq!(format!("{error}"), "Failed to parse name");
     }
 
     #[test]
     fn test_tool_name_parse_error_from_plugin_name_error() {
         let plugin_error = PluginNameParseError;
-        let tool_error: ToolNameParseError = plugin_error.into();
-        assert_eq!(format!("{tool_error}"), "Failed to parse tool name");
+        let tool_error: NamespacedNameParseError = plugin_error.into();
+        assert_eq!(format!("{tool_error}"), "Failed to parse name");
     }
 
     #[test]
@@ -1392,9 +1399,8 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let original_tool = "my_tool";
 
-        let namespaced = create_namespaced_tool_name(&plugin_name, original_tool).unwrap();
-        let (parsed_plugin, parsed_tool) =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced)).unwrap();
+        let namespaced = create_namespaced_name(&plugin_name, original_tool).unwrap();
+        let (parsed_plugin, parsed_tool) = parse_namespaced_name(namespaced).unwrap();
 
         assert_eq!(parsed_plugin.as_str(), "test_plugin");
         assert_eq!(parsed_tool, "my_tool");
@@ -1405,7 +1411,7 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "тест_工具"; // Cyrillic and Chinese characters
 
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "test_plugin-тест_工具");
     }
 
@@ -1414,12 +1420,11 @@ mod tests {
         let plugin_name = PluginName::from_str("plugin").unwrap();
         let very_long_tool = "a".repeat(1000);
 
-        let result = create_namespaced_tool_name(&plugin_name, &very_long_tool);
+        let result = create_namespaced_name(&plugin_name, &very_long_tool);
         assert!(result.is_ok());
 
         let namespaced = result.unwrap();
-        let (parsed_plugin, parsed_tool) =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced)).unwrap();
+        let (parsed_plugin, parsed_tool) = parse_namespaced_name(namespaced).unwrap();
 
         assert_eq!(parsed_plugin.as_str(), "plugin");
         assert_eq!(parsed_tool.len(), 1000);
@@ -1428,7 +1433,7 @@ mod tests {
     #[test]
     fn test_plugin_name_error_conversion() {
         let plugin_error = PluginNameParseError;
-        let tool_error: ToolNameParseError = plugin_error.into();
+        let tool_error: NamespacedNameParseError = plugin_error.into();
 
         // Test that the error implements standard error traits
         assert!(std::error::Error::source(&tool_error).is_none());
@@ -1440,11 +1445,10 @@ mod tests {
         let plugin_name = PluginName::from_str("plugin_123").unwrap();
         let tool_name = "tool_456_test";
 
-        let result = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
         assert_eq!(result, "plugin_123-tool_456_test");
 
-        let (parsed_plugin, parsed_tool) =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned(result)).unwrap();
+        let (parsed_plugin, parsed_tool) = parse_namespaced_name(result).unwrap();
         assert_eq!(parsed_plugin.as_str(), "plugin_123");
         assert_eq!(parsed_tool, "tool_456_test");
     }
@@ -1452,12 +1456,11 @@ mod tests {
     #[test]
     fn test_borrowed_vs_owned_cow_strings() {
         // Test with borrowed string
-        let borrowed_result = parse_namespaced_tool_name(std::borrow::Cow::Borrowed("plugin-tool"));
+        let borrowed_result = parse_namespaced_name("plugin-tool".to_string());
         assert!(borrowed_result.is_ok());
 
         // Test with owned string
-        let owned_result =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned("plugin-tool".to_string()));
+        let owned_result = parse_namespaced_name("plugin-tool".to_string());
         assert!(owned_result.is_ok());
 
         let (plugin1, tool1) = borrowed_result.unwrap();
@@ -1481,14 +1484,13 @@ mod tests {
         ];
 
         for (tool_name, should_succeed, description) in edge_cases {
-            let result = create_namespaced_tool_name(&plugin, tool_name);
+            let result = create_namespaced_name(&plugin, tool_name);
 
             if should_succeed {
                 assert!(result.is_ok(), "{description}: {tool_name}");
 
                 if let Ok(namespaced) = result {
-                    let parse_result =
-                        parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced));
+                    let parse_result = parse_namespaced_name(namespaced);
                     assert!(
                         parse_result.is_ok(),
                         "Should parse back {description}: {tool_name}"
@@ -1505,7 +1507,7 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "test_tool";
 
-        let namespaced = create_namespaced_tool_name(&plugin_name, tool_name).unwrap();
+        let namespaced = create_namespaced_name(&plugin_name, tool_name).unwrap();
 
         // Should contain at least one "-" (the separator)
         let hyphen_count = namespaced.matches("-").count();
@@ -1527,8 +1529,7 @@ mod tests {
         assert_eq!(namespaced, "test_plugin-test_tool");
 
         // Test parsing works correctly with the first hyphen as separator
-        let (parsed_plugin, parsed_tool) =
-            parse_namespaced_tool_name(std::borrow::Cow::Owned(namespaced.clone())).unwrap();
+        let (parsed_plugin, parsed_tool) = parse_namespaced_name(namespaced).unwrap();
         assert_eq!(parsed_plugin.as_str(), "test_plugin");
         assert_eq!(parsed_tool, "test_tool");
     }
