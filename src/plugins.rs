@@ -510,8 +510,12 @@ impl PluginService {
             })?;
             match plugin_service.peer.get() {
                 Some(peer) => {
-                    tracing::info!("Listing roots from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
+                    if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.roots.is_some() {
+                        tracing::info!("Listing roots from {}", ctx.plugin_name);
+                        ctx.handle.block_on(peer.list_roots()).map(Json).map_err(Error::from)
+                    } else {
+                        Ok(Json(ListRootsResult::default()))
+                    }
                 },
                 None => Ok(Json(ListRootsResult::default())),
             }
