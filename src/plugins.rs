@@ -15,6 +15,7 @@ use rmcp::{
     model::*,
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -95,18 +96,55 @@ static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::ne
 
 type PluginHandle = Arc<Mutex<extism::Plugin>>;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PluginRequestContext {
+    pub id: RequestId,
+    pub meta: Meta,
+}
+
+impl<'a> From<&'a RequestContext<RoleServer>> for PluginRequestContext {
+    fn from(context: &'a RequestContext<RoleServer>) -> Self {
+        PluginRequestContext {
+            id: context.id.clone(),
+            meta: context.meta.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PluginNotificationContext {
+    pub meta: Meta,
+}
+
+impl<'a> From<&'a NotificationContext<RoleServer>> for PluginNotificationContext {
+    fn from(context: &'a NotificationContext<RoleServer>) -> Self {
+        PluginNotificationContext {
+            meta: context.meta.clone(),
+        }
+    }
+}
+
 #[async_trait]
+#[allow(unused_variables)]
 trait Plugin: Send + Sync + Debug {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError>;
+
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
-    ) -> std::result::Result<ListToolsResult, McpError>;
+    ) -> Result<ListToolsResult, McpError>;
+
+    async fn on_roots_list_changed(
+        &self,
+        context: NotificationContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -122,11 +160,10 @@ impl Plugin for LegacyPlugin {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let call_payload = json!({
+        let call_payload = serde_json::to_string(&json!({
             "params": request,
-        });
-        let json_string =
-            serde_json::to_string(&call_payload).expect("Failed to serialize request");
+        }))
+        .expect("Failed to serialize request");
         let plugin = Arc::clone(&self.plugin);
         let plugin_name = self.name.clone();
         let cancel_handle = {
@@ -135,7 +172,7 @@ impl Plugin for LegacyPlugin {
         };
         let mut join = tokio::task::spawn_blocking(move || {
             let mut plugin = plugin.lock().unwrap();
-            plugin.call::<&str, String>("call", &json_string)
+            plugin.call::<&str, String>("call", &call_payload)
         });
 
         tokio::select! {
@@ -196,7 +233,7 @@ impl Plugin for LegacyPlugin {
         &self,
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
-    ) -> std::result::Result<ListToolsResult, McpError> {
+    ) -> Result<ListToolsResult, McpError> {
         let plugin = Arc::clone(&self.plugin);
         let cancel_handle = {
             let guard = plugin.lock().unwrap();
@@ -282,15 +319,202 @@ impl Plugin for CurrentPlugin {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        unimplemented!("CurrentPlugin is a placeholder and does not implement call_tool");
+        let plugin = Arc::clone(&self.plugin);
+        if !plugin.lock().unwrap().function_exists("call_tool") {
+            return Err(McpError::method_not_found::<CallToolRequestMethod>());
+        }
+        let plugin_name = self.name.clone();
+        let cancel_handle = {
+            let guard = plugin.lock().unwrap();
+            guard.cancel_handle()
+        };
+        let call_payload = serde_json::to_string(&json!({
+            "params": request,
+            "context": PluginRequestContext::from(&context),
+        }))
+        .expect("Failed to serialize request");
+
+        let mut join = tokio::task::spawn_blocking(move || {
+            let mut plugin = plugin.lock().unwrap();
+            plugin.call::<&str, String>("call_tool", &call_payload)
+        });
+
+        tokio::select! {
+            // Finished normally
+            res = &mut join => {
+                return match res {
+                    Ok(Ok(result)) => match serde_json::from_str::<CallToolResult>(&result) {
+                        Ok(parsed) => Ok(parsed),
+                        Err(e) => Err(McpError::internal_error(
+                            format!("Failed to deserialize data: {e}"),
+                            None,
+                        )),
+                    },
+                    Ok(Err(e)) => Err(McpError::internal_error(
+                        format!("Failed to execute plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                };
+            }
+
+            //Cancellation requested
+            _ = context.ct.cancelled() => {
+                if let Err(e) = cancel_handle.cancel() {
+                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
+                    return Err(McpError::internal_error(
+                        format!("Failed to cancel plugin {plugin_name}: {e}"),
+                        None,
+                    ));
+                }
+
+                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
+                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
+                        format!("Plugin {plugin_name} was cancelled"),
+                        None,
+                    )),
+                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
+                        format!("Failed to execute plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                    Ok(Err(e)) => Err(McpError::internal_error(
+                        format!("Join error for plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                    Err(_) => Err(McpError::internal_error(
+                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
+                        None,
+                    )),
+                };
+            }
+        }
     }
 
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
-    ) -> std::result::Result<ListToolsResult, McpError> {
-        unimplemented!("CurrentPlugin is a placeholder and does not implement list_tools");
+    ) -> Result<ListToolsResult, McpError> {
+        let plugin = Arc::clone(&self.plugin);
+        if !plugin.lock().unwrap().function_exists("list_tools") {
+            return Ok(ListToolsResult::default());
+        }
+        let plugin_name = self.name.clone();
+        let cancel_handle = {
+            let guard = plugin.lock().unwrap();
+            guard.cancel_handle()
+        };
+        let list_tools_payload = serde_json::to_string(&json!({
+            "context": PluginRequestContext::from(&context),
+        }))
+        .expect("Failed to serialize context");
+        let mut join = tokio::task::spawn_blocking(move || {
+            let mut plugin = plugin.lock().unwrap();
+            plugin.call::<&str, String>("list_tools", &list_tools_payload)
+        });
+        tokio::select! {
+            // Finished normally
+            res = &mut join => {
+                match res {
+                    Ok(Ok(result)) => {
+                        return serde_json::from_str::<ListToolsResult>(&result).map_err(|e| {
+                            McpError::internal_error(
+                                format!("Failed to deserialize data: {e}"),
+                                None,
+                            )
+                        });
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!("{plugin_name} describe() error: {e}");
+                        return Err(McpError::internal_error(
+                            format!("Failed to describe plugin {plugin_name}: {e}"),
+                            None,
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::error!("{plugin_name} spawn_blocking error: {e}");
+                        return Err(McpError::internal_error(
+                            format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                            None,
+                        ));
+                    }
+                };
+            }
+
+            //Cancellation requested
+            _ = context.ct.cancelled() => {
+                if let Err(e) = cancel_handle.cancel() {
+                    tracing::error!("Failed to cancel plugin {plugin_name}: {e}");
+                    return Err(McpError::internal_error(
+                        format!("Failed to cancel plugin {plugin_name}: {e}"),
+                        None,
+                    ));
+                }
+
+                return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
+                    Ok(Ok(Ok(_))) => Err(McpError::internal_error(
+                        format!("Plugin {plugin_name} was cancelled"),
+                        None,
+                    )),
+                    Ok(Ok(Err(e))) => Err(McpError::internal_error(
+                        format!("Failed to describe plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                    Ok(Err(e)) => Err(McpError::internal_error(
+                        format!("Join error for plugin {plugin_name}: {e}"),
+                        None,
+                    )),
+                    Err(_) => Err(McpError::internal_error(
+                        format!("Timeout waiting for plugin {plugin_name} to cancel"),
+                        None,
+                    )),
+                };
+            }
+        }
+    }
+
+    async fn on_roots_list_changed(
+        &self,
+        context: NotificationContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let plugin = Arc::clone(&self.plugin);
+        if !plugin
+            .lock()
+            .unwrap()
+            .function_exists("on_roots_list_changed")
+        {
+            return Ok(());
+        }
+        let plugin_name = self.name.clone();
+        let on_roots_list_changed_payload = serde_json::to_string(&json!({
+            "context": PluginNotificationContext::from(&context),
+        }))
+        .expect("Failed to serialize context");
+        match tokio::task::spawn_blocking(move || {
+            let mut plugin = plugin.lock().unwrap();
+            plugin.call::<&str, String>("on_roots_list_changed", &on_roots_list_changed_payload)
+        })
+        .await
+        {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => {
+                tracing::error!("Plugin {plugin_name} on_roots_list_changed() error: {e}");
+                Err(McpError::internal_error(
+                    format!("Failed to notify plugin {plugin_name}: {e}"),
+                    None,
+                ))
+            }
+            Err(e) => {
+                tracing::error!("Plugin {plugin_name} spawn_blocking error: {e}");
+                Err(McpError::internal_error(
+                    format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
+                    None,
+                ))
+            }
+        }
     }
 }
 
@@ -419,6 +643,36 @@ impl PluginService {
                 Some(peer) => {
                     tracing::debug!("Progress notification from {}", ctx.plugin_name);
                     ctx.handle.block_on(peer.notify_progress(progress)).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        host_fn!(notify_prompt_list_changed(ctx: PluginServiceContext;) {
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+
+            match plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_prompt_list_changed()).map_err(Error::from)
+                },
+                None => Ok(()),
+            }
+        });
+
+        host_fn!(notify_resource_list_changed(ctx: PluginServiceContext;) {
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+
+            match plugin_service.peer.get() {
+                Some(peer) => {
+                    tracing::info!("Notifying tool list changed from {}", ctx.plugin_name);
+                    ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
                 },
                 None => Ok(()),
             }
@@ -625,6 +879,28 @@ impl PluginService {
                         notify_progress,
                     ),
                     Function::new(
+                        "notify_prompt_list_changed",
+                        [],
+                        [],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        notify_prompt_list_changed,
+                    ),
+                    Function::new(
+                        "notify_resource_list_changed",
+                        [],
+                        [],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        notify_resource_list_changed,
+                    ),
+                    Function::new(
                         "notify_tool_list_changed",
                         [],
                         [],
@@ -736,6 +1012,11 @@ impl ServerHandler for PluginService {
             },
             capabilities: ServerCapabilities::builder()
                 .enable_logging()
+                .enable_prompts()
+                .enable_prompts_list_changed()
+                .enable_resources()
+                .enable_resources_list_changed()
+                .enable_resources_subscribe()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
@@ -807,6 +1088,19 @@ impl ServerHandler for PluginService {
         tracing::info!("client initialized");
         self.peer.set(context.peer).expect("Peer already set");
         std::future::ready(())
+    }
+
+    async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) -> () {
+        tracing::info!("got roots/list_changed notification");
+        let Some(plugins) = self.plugins.get() else {
+            tracing::error!("Plugins not initialized");
+            return;
+        };
+        for (plugin_name, plugin) in plugins.iter() {
+            if let Err(e) = plugin.on_roots_list_changed(context.clone()).await {
+                tracing::error!("Failed to notify plugin {plugin_name} of roots list change: {e}");
+            }
+        }
     }
 
     fn set_level(
