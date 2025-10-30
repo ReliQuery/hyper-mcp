@@ -2566,6 +2566,7 @@ name = "hyper-mcp"
 version = "0.1.8"
 dependencies = [
  "anyhow",
+ "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "axum",
