@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use dashmap::{DashMap, Entry};
+use dashmap::{DashMap, DashSet, Entry};
 use extism::{EXTISM_USER_MODULE, Function, Manifest, UserData, Wasm, host_fn};
 use extism_convert::Json;
 use rmcp::{
@@ -17,6 +17,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
+use serde_with::{DurationSeconds, serde_as};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -24,12 +25,14 @@ use std::{
     ops::Deref,
     str::FromStr,
     sync::{Arc, LazyLock, Mutex, RwLock, Weak},
+    time::Duration,
 };
 use tokio::{
     runtime::Handle,
     sync::{OnceCell, SetOnce},
 };
 use tokio_util::sync::CancellationToken;
+use url::Url;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -49,20 +52,39 @@ impl From<PluginNameParseError> for NamespacedNameParseError {
     }
 }
 
-fn create_namespaced_name(
-    plugin_name: &PluginName,
-    name: &str,
-) -> Result<String, NamespacedNameParseError> {
-    Ok(format!("{plugin_name}-{name}"))
+fn create_namespaced_name(plugin_name: &PluginName, name: &str) -> String {
+    format!("{plugin_name}-{name}")
 }
 
-fn parse_namespaced_name(
-    namespaced_name: String,
-) -> Result<(PluginName, String), NamespacedNameParseError> {
+fn create_namespaced_uri(plugin_name: &PluginName, uri: &String) -> Result<String> {
+    let mut uri = Url::parse(uri)?;
+    uri.set_path(&format!(
+        "{}/{}",
+        plugin_name.as_str(),
+        uri.path().trim_start_matches('/')
+    ));
+    Ok(uri.to_string())
+}
+
+fn parse_namespaced_name(namespaced_name: String) -> Result<(PluginName, String)> {
     if let Some((plugin_name, tool_name)) = namespaced_name.split_once("-") {
         return Ok((PluginName::from_str(plugin_name)?, tool_name.to_string()));
     }
-    Err(NamespacedNameParseError)
+    Err(NamespacedNameParseError.into())
+}
+
+fn parse_namespaced_uri(namespaced_uri: String) -> Result<(PluginName, String)> {
+    let mut uri = Url::parse(namespaced_uri.as_str())?;
+    let mut segments = uri
+        .path_segments()
+        .ok_or_else(|| url::ParseError::RelativeUrlWithoutBase)?
+        .collect::<Vec<&str>>();
+    if segments.len() < 1 {
+        return Err(NamespacedNameParseError.into());
+    }
+    let plugin_name = PluginName::from_str(segments.remove(0))?;
+    uri.set_path(&segments.join("/"));
+    Ok((plugin_name, uri.to_string()))
 }
 
 /// Check if a value contains an environment variable reference in the format ${ENVVARKEY}
@@ -125,6 +147,16 @@ impl<'a> From<&'a NotificationContext<RoleServer>> for PluginNotificationContext
     }
 }
 
+#[allow(dead_code)]
+#[serde_as]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CreateElicitationRequestParamWithTimeout {
+    #[serde(flatten)]
+    pub inner: CreateElicitationRequestParam,
+    #[serde_as(as = "Option<DurationSeconds<f64>>")]
+    pub timeout: Option<Duration>,
+}
+
 #[async_trait]
 #[allow(unused_variables)]
 trait Plugin: Send + Sync + Debug {
@@ -150,6 +182,22 @@ trait Plugin: Send + Sync + Debug {
         Ok(ListPromptsResult::default())
     }
 
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult::default())
+    }
+
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult::default())
+    }
+
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParam>,
@@ -166,10 +214,18 @@ trait Plugin: Send + Sync + Debug {
     }
 
     fn plugin(&self) -> &PluginHandle;
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        Err(McpError::method_not_found::<ReadResourceRequestMethod>())
+    }
 }
 
 async fn call_plugin<R>(
-    self_: &dyn Plugin,
+    plugin: &dyn Plugin,
     name: &str,
     payload: String,
     ct: CancellationToken,
@@ -177,14 +233,14 @@ async fn call_plugin<R>(
 where
     R: DeserializeOwned + Send + 'static,
 {
-    let plugin = Arc::clone(self_.plugin());
-    let plugin_name = self_.name().to_string();
-    if !plugin.lock().unwrap().function_exists(name) {
+    let plugin_name = plugin.name().to_string();
+    if !function_exists_plugin(plugin, name) {
         return Err(McpError::invalid_request(
             format!("Method {name} not found for plugin {plugin_name}"),
             None,
         ));
     }
+    let plugin = Arc::clone(plugin.plugin());
     let cancel_handle = {
         let guard = plugin.lock().unwrap();
         guard.cancel_handle()
@@ -253,15 +309,20 @@ where
     }
 }
 
-async fn notify_plugin(self_: &dyn Plugin, name: &str, payload: String) -> Result<(), McpError> {
-    let plugin = Arc::clone(self_.plugin());
-    let plugin_name = self_.name().to_string();
-    if !plugin.lock().unwrap().function_exists(name) {
+fn function_exists_plugin(plugin: &dyn Plugin, name: &str) -> bool {
+    let plugin = Arc::clone(plugin.plugin());
+    plugin.lock().unwrap().function_exists(name)
+}
+
+async fn notify_plugin(plugin: &dyn Plugin, name: &str, payload: String) -> Result<(), McpError> {
+    let plugin_name = plugin.name().to_string();
+    if !function_exists_plugin(plugin, name) {
         return Err(McpError::invalid_request(
             format!("Method {name} not found for plugin {plugin_name}"),
             None,
         ));
     }
+    let plugin = Arc::clone(plugin.plugin());
     let name = name.to_string();
     tokio::task::spawn_blocking(move || {
         let mut plugin = plugin.lock().unwrap();
@@ -274,13 +335,24 @@ async fn notify_plugin(self_: &dyn Plugin, name: &str, payload: String) -> Resul
 }
 
 #[derive(Debug)]
-struct LegacyPlugin {
+struct PluginBase {
     name: PluginName,
     plugin: PluginHandle,
 }
 
+#[derive(Debug)]
+struct PluginV1(PluginBase);
+
+impl Deref for PluginV1 {
+    type Target = PluginBase;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[async_trait]
-impl Plugin for LegacyPlugin {
+impl Plugin for PluginV1 {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
@@ -315,14 +387,25 @@ impl Plugin for LegacyPlugin {
     }
 }
 
+impl PluginV1 {
+    fn new(name: PluginName, plugin: PluginHandle) -> Self {
+        Self(PluginBase { name, plugin })
+    }
+}
+
 #[derive(Debug)]
-struct CurrentPlugin {
-    name: PluginName,
-    plugin: PluginHandle,
+struct PluginV2(PluginBase);
+
+impl Deref for PluginV2 {
+    type Target = PluginBase;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[async_trait]
-impl Plugin for CurrentPlugin {
+impl Plugin for PluginV2 {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
@@ -364,9 +447,52 @@ impl Plugin for CurrentPlugin {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
+        if !function_exists_plugin(self, "list_prompts") {
+            return Ok(ListPromptsResult::default());
+        }
         call_plugin::<ListPromptsResult>(
             self,
             "list_prompts",
+            serde_json::to_string(&json!({
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize context"),
+            context.ct,
+        )
+        .await
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        if !function_exists_plugin(self, "list_resources") {
+            return Ok(ListResourcesResult::default());
+        }
+        call_plugin::<ListResourcesResult>(
+            self,
+            "list_resources",
+            serde_json::to_string(&json!({
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize context"),
+            context.ct,
+        )
+        .await
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        if !function_exists_plugin(self, "list_resource_templates") {
+            return Ok(ListResourceTemplatesResult::default());
+        }
+        call_plugin::<ListResourceTemplatesResult>(
+            self,
+            "list_resource_templates",
             serde_json::to_string(&json!({
                 "context": PluginRequestContext::from(&context),
             }))
@@ -381,6 +507,9 @@ impl Plugin for CurrentPlugin {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        if !function_exists_plugin(self, "list_tools") {
+            return Ok(ListToolsResult::default());
+        }
         call_plugin::<ListToolsResult>(
             self,
             "list_tools",
@@ -401,6 +530,9 @@ impl Plugin for CurrentPlugin {
         &self,
         context: NotificationContext<RoleServer>,
     ) -> Result<(), McpError> {
+        if function_exists_plugin(self, "on_roots_list_changed") {
+            return Ok(());
+        }
         notify_plugin(
             self,
             "on_roots_list_changed",
@@ -414,6 +546,30 @@ impl Plugin for CurrentPlugin {
 
     fn plugin(&self) -> &PluginHandle {
         &self.plugin
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        call_plugin::<ReadResourceResult>(
+            self,
+            "read_resource",
+            serde_json::to_string(&json!({
+                "request": request,
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize request"),
+            context.ct,
+        )
+        .await
+    }
+}
+
+impl PluginV2 {
+    fn new(name: PluginName, plugin: PluginHandle) -> Self {
+        Self(PluginBase { name, plugin })
     }
 }
 
@@ -431,6 +587,7 @@ pub struct PluginServiceInner {
     names: SetOnce<HashMap<Uuid, PluginName>>,
     peer: SetOnce<Peer<RoleServer>>,
     plugins: SetOnce<HashMap<PluginName, Box<dyn Plugin>>>,
+    subscriptions: DashSet<String>,
 }
 
 impl Drop for PluginServiceInner {
@@ -476,6 +633,7 @@ impl PluginService {
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
+            subscriptions: DashSet::new(),
         });
         PLUGIN_SERVICE_INNER_REGISTRY.insert(inner.id, Arc::downgrade(&inner));
         let service = Self(inner);
@@ -502,8 +660,36 @@ impl PluginService {
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
-        host_fn!(create_message(ctx:PluginServiceContext; sampling_message: Json<CreateMessageRequestParam>) -> Json<CreateMessageResult> {
-            let sampling_message = sampling_message.into_inner();
+        host_fn!(create_elicitation(ctx: PluginServiceContext; elicitation_msg: Json<CreateElicitationRequestParamWithTimeout>) -> Json<CreateElicitationResult> {
+            let elicitation_msg = elicitation_msg.into_inner();
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            match plugin_service.peer.get() {
+                Some(peer) => {
+                    if peer.supports_elicitation() {
+                        if let Some(timeout) = elicitation_msg.timeout {
+                            tracing::info!("Creating elicitation from {} with timeout {:?}", ctx.plugin_name, timeout);
+                            ctx.handle.block_on(peer.create_elicitation_with_timeout(elicitation_msg.inner, Some(timeout))).map(Json).map_err(Error::from)
+                        } else {
+                            tracing::info!("Creating elicitation from {}", ctx.plugin_name);
+                            ctx.handle.block_on(peer.create_elicitation(elicitation_msg.inner)).map(Json).map_err(Error::from)
+                        }
+                    } else {
+                        tracing::info!("Peer does not support elicitation, declining from {}", ctx.plugin_name);
+                        Ok(Json(CreateElicitationResult {
+                            action: ElicitationAction::Decline,
+                            content: None,
+                        }))
+                    }
+                },
+                None => Err(anyhow::anyhow!("No peer available")),
+            }
+        });
+
+        host_fn!(create_message(ctx: PluginServiceContext; sampling_msg: Json<CreateMessageRequestParam>) -> Json<CreateMessageResult> {
+            let sampling_msg = sampling_msg.into_inner();
             let ctx = ctx.get()?.lock().unwrap().clone();
             let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
                 anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
@@ -511,8 +697,8 @@ impl PluginService {
             match plugin_service.peer.get() {
                 Some(peer) => {
                     if let Some(peer_info) = peer.peer_info() && peer_info.capabilities.sampling.is_some() {
-                        tracing::info!("Creating message from {}", ctx.plugin_name);
-                        ctx.handle.block_on(peer.create_message(sampling_message)).map(Json).map_err(Error::from)
+                        tracing::info!("Creating sampling message from {}", ctx.plugin_name);
+                        ctx.handle.block_on(peer.create_message(sampling_msg)).map(Json).map_err(Error::from)
                     } else {
                         Err(anyhow::anyhow!("Peer does not support sampling"))
                     }
@@ -542,21 +728,21 @@ impl PluginService {
 
         // Declares a host function `notify_logging_message` that plugins can call
         host_fn!(notify_logging_message(ctx: PluginServiceContext; log_msg: Json<LoggingMessageNotificationParam>) {
-            let message = log_msg.into_inner();
+            let log_msg = log_msg.into_inner();
             let ctx = ctx.get()?.lock().unwrap().clone();
             let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
                 anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
             })?;
-            if (plugin_service.logging_level() as u8) <= (message.level as u8) && let Some(peer) = plugin_service.peer.get() {
+            if (plugin_service.logging_level() as u8) <= (log_msg.level as u8) && let Some(peer) = plugin_service.peer.get() {
                 tracing::debug!("Logging message from {}", ctx.plugin_name);
-                return ctx.handle.block_on(peer.notify_logging_message(message)).map_err(Error::from);
+                return ctx.handle.block_on(peer.notify_logging_message(log_msg)).map_err(Error::from);
             }
             Ok(())
         });
 
         // Declares a host function `notify_progress` that plugins can call
-        host_fn!(notify_progress(ctx: PluginServiceContext; progress: Json<ProgressNotificationParam>) {
-            let progress = progress.into_inner();
+        host_fn!(notify_progress(ctx: PluginServiceContext; progress_msg: Json<ProgressNotificationParam>) {
+            let progress_msg = progress_msg.into_inner();
             let ctx = ctx.get()?.lock().unwrap().clone();
             let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
                 anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
@@ -564,7 +750,7 @@ impl PluginService {
             match plugin_service.peer.get() {
                 Some(peer) => {
                     tracing::debug!("Progress notification from {}", ctx.plugin_name);
-                    ctx.handle.block_on(peer.notify_progress(progress)).map_err(Error::from)
+                    ctx.handle.block_on(peer.notify_progress(progress_msg)).map_err(Error::from)
                 },
                 None => Ok(()),
             }
@@ -597,6 +783,26 @@ impl PluginService {
                     ctx.handle.block_on(peer.notify_resource_list_changed()).map_err(Error::from)
                 },
                 None => Ok(()),
+            }
+        });
+
+        host_fn!(notify_resource_updated(ctx: PluginServiceContext; update_msg: Json<ResourceUpdatedNotificationParam>) {
+            let update_msg = update_msg.into_inner();
+            let ctx = ctx.get()?.lock().unwrap().clone();
+            let plugin_service = PluginService::get(ctx.plugin_service_id).ok_or_else(|| {
+                anyhow::anyhow!("PluginService with ID {:?} not found", ctx.plugin_service_id)
+            })?;
+            if plugin_service.subscriptions.contains(&update_msg.uri) {
+                match plugin_service.peer.get() {
+                    Some(peer) => {
+                        tracing::info!("Notifying resource {} updated from {}", update_msg.uri, ctx.plugin_name);
+                        ctx.handle.block_on(peer.notify_resource_updated(update_msg)).map_err(Error::from)
+                    },
+                    None => Ok(()),
+                }
+            }
+            else {
+                Ok(())
             }
         });
 
@@ -768,6 +974,18 @@ impl PluginService {
                 &manifest,
                 [
                     Function::new(
+                        "create_elicitation",
+                        [extism::PTR],
+                        [extism::PTR],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        create_elicitation,
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
+                    Function::new(
                         "create_message",
                         [extism::PTR],
                         [extism::PTR],
@@ -777,7 +995,8 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         create_message,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "list_roots",
                         [],
@@ -788,7 +1007,8 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         list_roots,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "notify_logging_message",
                         [extism::PTR],
@@ -799,7 +1019,8 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         notify_logging_message,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "notify_progress",
                         [extism::PTR],
@@ -810,7 +1031,8 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         notify_progress,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "notify_prompt_list_changed",
                         [],
@@ -821,7 +1043,8 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         notify_prompt_list_changed,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "notify_resource_list_changed",
                         [],
@@ -832,7 +1055,20 @@ impl PluginService {
                             plugin_name: plugin_name.to_string(),
                         }),
                         notify_resource_list_changed,
-                    ),
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
+                    Function::new(
+                        "notify_resource_updated",
+                        [extism::PTR],
+                        [],
+                        UserData::new(PluginServiceContext {
+                            plugin_service_id: self.id,
+                            handle: Handle::current(),
+                            plugin_name: plugin_name.to_string(),
+                        }),
+                        notify_resource_updated,
+                    )
+                    .with_namespace(EXTISM_USER_MODULE),
                     Function::new(
                         "notify_tool_list_changed",
                         [],
@@ -854,15 +1090,15 @@ impl PluginService {
             let plugin: Box<dyn Plugin> = if extism_plugin.function_exists("call")
                 && extism_plugin.function_exists("describe")
             {
-                Box::new(LegacyPlugin {
-                    name: plugin_name.clone(),
-                    plugin: Arc::new(Mutex::new(extism_plugin)),
-                })
+                Box::new(PluginV1::new(
+                    plugin_name.clone(),
+                    Arc::new(Mutex::new(extism_plugin)),
+                ))
             } else {
-                Box::new(CurrentPlugin {
-                    name: plugin_name.clone(),
-                    plugin: Arc::new(Mutex::new(extism_plugin)),
-                })
+                Box::new(PluginV2::new(
+                    plugin_name.clone(),
+                    Arc::new(Mutex::new(extism_plugin)),
+                ))
             };
 
             names.insert(plugin_id, plugin_name.clone());
@@ -985,7 +1221,7 @@ impl ServerHandler for PluginService {
             .and_then(|rc| rc.skip_prompts.clone())
             && skip_prompts.is_match(&prompt_name)
         {
-            tracing::warn!("Tool {prompt_name} in skip_prompts");
+            tracing::warn!("Prompt {prompt_name} in skip_prompts");
             return Err(McpError::method_not_found::<GetPromptRequestMethod>());
         }
 
@@ -1046,24 +1282,118 @@ impl ServerHandler for PluginService {
                     );
                     continue;
                 }
-                let namespaced_prompt_name = create_namespaced_name(plugin_name, &prompt.name)
-                    .map_err(|e| {
-                        McpError::internal_error(
-                            format!("Failed to create namespaced prompt name: {e}"),
-                            None,
-                        )
-                    })?;
-                list_prompts_result.prompts.push(Prompt {
-                    arguments: prompt.arguments,
-                    name: namespaced_prompt_name,
-                    title: prompt.title,
-                    description: prompt.description,
-                    icons: prompt.icons,
-                });
+                let mut new_prompt = prompt.clone();
+                new_prompt.name = create_namespaced_name(plugin_name, &prompt.name);
+                list_prompts_result.prompts.push(new_prompt);
             }
         }
 
         Ok(list_prompts_result)
+    }
+
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        tracing::info!("got resources/list request {:?}", request);
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let mut list_resources_result = ListResourcesResult::default();
+
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_resources = plugin
+                .list_resources(request.clone(), context.clone())
+                .await?;
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_resources = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_resources.clone())
+                .unwrap_or_default();
+            for resource in plugin_resources.resources {
+                if skip_resources.is_match(resource.uri.as_str()) {
+                    tracing::info!(
+                        "Skipping resource {} as requested in skip_resources",
+                        resource.uri
+                    );
+                    continue;
+                }
+                let mut raw = resource.raw.clone();
+                raw.uri = create_namespaced_uri(plugin_name, &resource.uri)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                list_resources_result.resources.push(Resource {
+                    raw,
+                    annotations: resource.annotations.clone(),
+                });
+            }
+        }
+
+        Ok(list_resources_result)
+    }
+
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        tracing::info!("got resources/templates/list request {:?}", request);
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let mut list_resource_templates_result = ListResourceTemplatesResult::default();
+
+        for (plugin_name, plugin) in plugins.iter() {
+            let plugin_resource_templates = plugin
+                .list_resource_templates(request.clone(), context.clone())
+                .await?;
+            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+                McpError::internal_error(
+                    format!("Plugin configuration not found for {plugin_name}"),
+                    None,
+                )
+            })?;
+            let skip_resource_templates = plugin_cfg
+                .runtime_config
+                .as_ref()
+                .and_then(|rc| rc.skip_resource_templatess.clone())
+                .unwrap_or_default();
+            for resource_template in plugin_resource_templates.resource_templates {
+                if skip_resource_templates.is_match(resource_template.uri_template.as_str()) {
+                    tracing::info!(
+                        "Skipping resource template {} as requested in skip_resources",
+                        resource_template.uri_template
+                    );
+                    continue;
+                }
+                let mut raw = resource_template.raw.clone();
+                raw.uri_template =
+                    create_namespaced_uri(plugin_name, &resource_template.uri_template)
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                list_resource_templates_result
+                    .resource_templates
+                    .push(ResourceTemplate {
+                        raw,
+                        annotations: resource_template.annotations.clone(),
+                    });
+            }
+        }
+
+        Ok(list_resource_templates_result)
     }
 
     async fn list_tools(
@@ -1100,22 +1430,10 @@ impl ServerHandler for PluginService {
                     tracing::info!("Skipping tool {} as requested in skip_tools", tool.name);
                     continue;
                 }
-                let namespaced_tool_name = create_namespaced_name(plugin_name, &tool.name)
-                    .map_err(|e| {
-                        McpError::internal_error(
-                            format!("Failed to create namespaced tool name: {e}"),
-                            None,
-                        )
-                    })?;
-                list_tools_result.tools.push(Tool {
-                    name: std::borrow::Cow::Owned(namespaced_tool_name),
-                    title: tool.title,
-                    description: tool.description,
-                    input_schema: tool.input_schema,
-                    output_schema: tool.output_schema,
-                    annotations: tool.annotations,
-                    icons: tool.icons,
-                });
+                let mut new_tool = tool.clone();
+                new_tool.name =
+                    std::borrow::Cow::Owned(create_namespaced_name(plugin_name, &tool.name));
+                list_tools_result.tools.push(new_tool);
             }
         }
 
@@ -1144,12 +1462,78 @@ impl ServerHandler for PluginService {
         }
     }
 
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        tracing::info!("got resources/read request {:?}", request);
+        let (plugin_name, resource_uri) = match parse_namespaced_uri(request.uri.to_string()) {
+            Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
+            Err(e) => {
+                return Err(McpError::invalid_request(
+                    format!("Failed to parse prompt name: {e}"),
+                    None,
+                ));
+            }
+        };
+        let plugin_config = match self.config.plugins.get(&plugin_name) {
+            Some(config) => config,
+            None => {
+                return Err(McpError::method_not_found::<ReadResourceRequestMethod>());
+            }
+        };
+        if let Some(skip_resources) = &plugin_config
+            .runtime_config
+            .as_ref()
+            .and_then(|rc| rc.skip_resources.clone())
+            && skip_resources.is_match(&resource_uri)
+        {
+            tracing::warn!("Resource {resource_uri} in skip_resources");
+            return Err(McpError::method_not_found::<ReadResourceRequestMethod>());
+        }
+
+        let request = ReadResourceRequestParam {
+            uri: resource_uri.clone(),
+        };
+
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let Some(plugin) = plugins.get(&plugin_name) else {
+            return Err(McpError::method_not_found::<GetPromptRequestMethod>());
+        };
+        plugin.read_resource(request, context).await
+    }
+
     fn set_level(
         &self,
         request: SetLevelRequestParam,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         self.set_logging_level(request.level);
+        std::future::ready(Ok(()))
+    }
+
+    fn subscribe(
+        &self,
+        request: SubscribeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+        self.subscriptions.insert(request.uri);
+        std::future::ready(Ok(()))
+    }
+
+    fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = std::result::Result<(), McpError>> + Send + '_ {
+        self.subscriptions.remove(&request.uri);
         std::future::ready(Ok(()))
     }
 }
@@ -1256,6 +1640,7 @@ mod tests {
             names: SetOnce::new(),
             peer: SetOnce::new(),
             plugins: SetOnce::new(),
+            subscriptions: DashSet::new(),
         }))
     }
 
@@ -1314,10 +1699,7 @@ mod tests {
         let plugin_name = PluginName::from_str("example_plugin").unwrap();
         let tool_name = "example_tool";
         let expected = "example_plugin-example_tool";
-        assert_eq!(
-            create_namespaced_name(&plugin_name, tool_name).unwrap(),
-            expected
-        );
+        assert_eq!(create_namespaced_name(&plugin_name, tool_name), expected);
     }
 
     #[test]
@@ -1334,7 +1716,7 @@ mod tests {
     fn test_create_tool_name_invalid() {
         let plugin_name = PluginName::from_str("example_plugin").unwrap();
         let tool_name = "invalid-tool";
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "example_plugin-invalid-tool");
     }
 
@@ -1342,7 +1724,7 @@ mod tests {
     fn test_create_namespaced_tool_name_with_special_chars() {
         let plugin_name = PluginName::from_str("test_plugin_123").unwrap();
         let tool_name = "tool_name_with_underscores";
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "test_plugin_123-tool_name_with_underscores");
     }
 
@@ -1350,7 +1732,7 @@ mod tests {
     fn test_create_namespaced_tool_name_empty_tool_name() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "";
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "test_plugin-");
     }
 
@@ -1358,7 +1740,7 @@ mod tests {
     fn test_create_namespaced_tool_name_multiple_hyphens() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "invalid-tool-name";
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "test_plugin-invalid-tool-name");
     }
 
@@ -1375,7 +1757,6 @@ mod tests {
         let tool_name = "invalid_tool_name".to_string();
         let result = parse_namespaced_name(tool_name);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), NamespacedNameParseError));
     }
 
     #[test]
@@ -1433,7 +1814,7 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let original_tool = "my_tool";
 
-        let namespaced = create_namespaced_name(&plugin_name, original_tool).unwrap();
+        let namespaced = create_namespaced_name(&plugin_name, original_tool);
         let (parsed_plugin, parsed_tool) = parse_namespaced_name(namespaced).unwrap();
 
         assert_eq!(parsed_plugin.as_str(), "test_plugin");
@@ -1445,7 +1826,7 @@ mod tests {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "тест_工具"; // Cyrillic and Chinese characters
 
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "test_plugin-тест_工具");
     }
 
@@ -1454,10 +1835,8 @@ mod tests {
         let plugin_name = PluginName::from_str("plugin").unwrap();
         let very_long_tool = "a".repeat(1000);
 
-        let result = create_namespaced_name(&plugin_name, &very_long_tool);
-        assert!(result.is_ok());
+        let namespaced = create_namespaced_name(&plugin_name, &very_long_tool);
 
-        let namespaced = result.unwrap();
         let (parsed_plugin, parsed_tool) = parse_namespaced_name(namespaced).unwrap();
 
         assert_eq!(parsed_plugin.as_str(), "plugin");
@@ -1479,7 +1858,7 @@ mod tests {
         let plugin_name = PluginName::from_str("plugin_123").unwrap();
         let tool_name = "tool_456_test";
 
-        let result = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let result = create_namespaced_name(&plugin_name, tool_name);
         assert_eq!(result, "plugin_123-tool_456_test");
 
         let (parsed_plugin, parsed_tool) = parse_namespaced_name(result).unwrap();
@@ -1505,43 +1884,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_name_edge_cases() {
-        let plugin = PluginName::from_str("test").unwrap();
-
-        let edge_cases = vec![
-            ("a", true, "single character tool"),
-            ("tool_123", true, "tool with numbers"),
-            ("TOOL_NAME", true, "uppercase tool name"),
-            ("tool-invalid", true, "tool with hyphen"),
-            ("-tool", true, "tool starting with hyphen"),
-            ("tool-", true, "tool ending with hyphen"),
-        ];
-
-        for (tool_name, should_succeed, description) in edge_cases {
-            let result = create_namespaced_name(&plugin, tool_name);
-
-            if should_succeed {
-                assert!(result.is_ok(), "{description}: {tool_name}");
-
-                if let Ok(namespaced) = result {
-                    let parse_result = parse_namespaced_name(namespaced);
-                    assert!(
-                        parse_result.is_ok(),
-                        "Should parse back {description}: {tool_name}"
-                    );
-                }
-            } else {
-                assert!(result.is_err(), "{description}: {tool_name}");
-            }
-        }
-    }
-
-    #[test]
     fn test_namespaced_tool_format_invariants() {
         let plugin_name = PluginName::from_str("test_plugin").unwrap();
         let tool_name = "test_tool";
 
-        let namespaced = create_namespaced_name(&plugin_name, tool_name).unwrap();
+        let namespaced = create_namespaced_name(&plugin_name, tool_name);
 
         // Should contain at least one "-" (the separator)
         let hyphen_count = namespaced.matches("-").count();
