@@ -30,10 +30,13 @@ pub(crate) fn call(input: types::CallToolRequest) -> Result<types::CallToolResul
             let rfc2822 = now.to_rfc2822().to_string();
             Ok(CallToolResult {
                 content: vec![Content {
-                    text: Some(json!({
-                        "utc_time": timestamp,
-                        "utc_time_rfc2822": rfc2822,
-                    }).to_string()),
+                    text: Some(
+                        json!({
+                            "utc_time": timestamp,
+                            "utc_time_rfc2822": rfc2822,
+                        })
+                        .to_string(),
+                    ),
                     r#type: ContentType::Text,
                     ..Default::default()
                 }],
@@ -47,10 +50,13 @@ pub(crate) fn call(input: types::CallToolRequest) -> Result<types::CallToolResul
             let rfc2822 = t.to_rfc2822().to_string();
             Ok(CallToolResult {
                 content: vec![Content {
-                    text: Some(json!({
-                        "utc_time": timestamp,
-                        "utc_time_rfc2822": rfc2822,
-                    }).to_string()),
+                    text: Some(
+                        json!({
+                            "utc_time": timestamp,
+                            "utc_time_rfc2822": rfc2822,
+                        })
+                        .to_string(),
+                    ),
                     r#type: ContentType::Text,
                     ..Default::default()
                 }],
@@ -66,10 +72,13 @@ pub(crate) fn call(input: types::CallToolRequest) -> Result<types::CallToolResul
             let rfc2822 = t2.to_rfc2822().to_string();
             Ok(CallToolResult {
                 content: vec![Content {
-                    text: Some(json!({
-                        "utc_time": timestamp,
-                        "utc_time_rfc2822": rfc2822,
-                    }).to_string()),
+                    text: Some(
+                        json!({
+                            "utc_time": timestamp,
+                            "utc_time_rfc2822": rfc2822,
+                        })
+                        .to_string(),
+                    ),
                     r#type: ContentType::Text,
                     ..Default::default()
                 }],
@@ -84,11 +93,11 @@ pub(crate) fn describe() -> Result<types::ListToolsResult, Error> {
     Ok(types::ListToolsResult { tools: vec![ToolDescription {
         name: "time".into(),
         description: "Time operations plugin. It provides the following operations:
-        
+
 - `get_time_utc`: Returns the current time in the UTC timezone. Takes no parameters.
 - `parse_time`: Takes a `time_rfc2822` string in RFC2822 format and returns the timestamp in UTC timezone.
 - `time_offset`: Takes integer `timestamp` and `offset` parameters. Adds a time offset to a given timestamp and returns the new timestamp in UTC timezone.
-                
+
 Always use this tool to compute time operations, especially when it is necessary
 to compute time differences or offsets.".into(),
         input_schema: json!({

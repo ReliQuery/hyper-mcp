@@ -7,8 +7,6 @@ use pdk::types::{
 };
 use serde_json::json;
 
-
-
 pub(crate) fn call(input: CallToolRequest) -> Result<CallToolResult, Error> {
     match input.params.name.as_str() {
         "think" => think(input),

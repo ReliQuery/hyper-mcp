@@ -56,7 +56,8 @@ impl FileTreeNode {
 // Renamed and modified function to convert FileTreeNode to termtree::Tree<String>
 fn convert_file_tree_to_termtree(file_node: &FileTreeNode) -> Tree<String> {
     let mut tree_node = Tree::new(file_node.name.clone());
-    for child_file_node in file_node.children.values() { // Iterate over sorted children
+    for child_file_node in file_node.children.values() {
+        // Iterate over sorted children
         tree_node.push(convert_file_tree_to_termtree(child_file_node));
     }
     tree_node
@@ -73,16 +74,28 @@ fn build_and_format_tree_from_entries(
     }
 
     let root_display_name = match requested_path_opt {
-        Some(req_path) if !req_path.is_empty() => req_path.split('/').next_back().unwrap_or("root").to_string(),
-        _ => project_id_str.split('/').next_back().unwrap_or("root").to_string(),
+        Some(req_path) if !req_path.is_empty() => req_path
+            .split('/')
+            .next_back()
+            .unwrap_or("root")
+            .to_string(),
+        _ => project_id_str
+            .split('/')
+            .next_back()
+            .unwrap_or("root")
+            .to_string(),
     };
 
     let mut root_node = FileTreeNode::new(&root_display_name);
 
     for entry in entries {
         let effective_path = match requested_path_opt {
-            Some(base_path_val) if !base_path_val.is_empty() && entry.path.starts_with(base_path_val) => {
-                entry.path.strip_prefix(base_path_val)
+            Some(base_path_val)
+                if !base_path_val.is_empty() && entry.path.starts_with(base_path_val) =>
+            {
+                entry
+                    .path
+                    .strip_prefix(base_path_val)
                     .unwrap_or(&entry.path)
                     .trim_start_matches('/')
                     .to_string()
@@ -94,7 +107,10 @@ fn build_and_format_tree_from_entries(
             continue;
         }
 
-        let path_segments: Vec<&str> = effective_path.split('/').filter(|s| !s.is_empty()).collect();
+        let path_segments: Vec<&str> = effective_path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
         if !path_segments.is_empty() {
             root_node.insert_path(&path_segments);
         }
@@ -320,20 +336,16 @@ fn update_issue(input: CallToolRequest) -> Result<CallToolResult, Error> {
     let args = input.params.arguments.clone().unwrap_or_default();
     let (token, gitlab_url) = get_gitlab_config()?;
 
-    if let (
-        Some(Value::String(project_id)),
-        Some(Value::String(issue_iid)),
-    ) = (
-        args.get("project_id"),
-        args.get("issue_iid"),
-    ) {
+    if let (Some(Value::String(project_id)), Some(Value::String(issue_iid))) =
+        (args.get("project_id"), args.get("issue_iid"))
+    {
         let url = format!(
             "{}/projects/{}/issues/{}",
             gitlab_url,
             urlencode_if_needed(project_id),
             issue_iid
         );
-        
+
         let mut body_map = serde_json::Map::new();
         if let Some(Value::String(title)) = args.get("title") {
             body_map.insert("title".to_string(), json!(title));
@@ -363,7 +375,7 @@ fn update_issue(input: CallToolRequest) -> Result<CallToolResult, Error> {
                 }],
             });
         }
-        
+
         let body = Value::Object(body_map);
 
         let mut headers = BTreeMap::new();
@@ -718,7 +730,7 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
             urlencode_if_needed(file_path),
             branch
         );
-        
+
         let mut headers_check = BTreeMap::new();
         headers_check.insert("PRIVATE-TOKEN".to_string(), token.clone());
         headers_check.insert("User-Agent".to_string(), "hyper-mcp/0.1.0".to_string());
@@ -730,9 +742,9 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
         };
 
         let check_res = http::request::<()>(&check_req, None)?;
-        
+
         let http_method = match check_res.status_code() {
-            200 => "PUT", // File exists, so update
+            200 => "PUT",  // File exists, so update
             404 => "POST", // File does not exist, so create
             _ => {
                 return Ok(CallToolResult {
@@ -749,7 +761,7 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
                         r#type: ContentType::Text,
                         data: None,
                     }],
-                })
+                });
             }
         };
 
@@ -759,7 +771,7 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
             "{}/projects/{}/repository/files/{}",
             gitlab_url,
             urlencode_if_needed(project_id),
-            urlencode_if_needed(file_path) 
+            urlencode_if_needed(file_path)
         );
 
         let mut body_map = serde_json::Map::new();
@@ -773,7 +785,7 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
         if let Some(Value::String(author_name)) = args.get("author_name") {
             body_map.insert("author_name".to_string(), json!(author_name));
         }
-        // Note: For 'POST' (create), 'encoding' can be 'base64'. 
+        // Note: For 'POST' (create), 'encoding' can be 'base64'.
         // GitLab API often expects content to be base64 encoded for new files if not plain text.
         // For simplicity, we assume content is plain text, and GitLab handles it.
         // If issues arise with binary or special characters, 'content' might need explicit base64 encoding
@@ -812,7 +824,11 @@ fn create_or_update_file(input: CallToolRequest) -> Result<CallToolResult, Error
                     annotations: None,
                     text: Some(format!(
                         "Failed to {} file (method {}, status {} on {}): Response: {}",
-                        if http_method == "POST" { "create" } else { "update" },
+                        if http_method == "POST" {
+                            "create"
+                        } else {
+                            "update"
+                        },
                         http_method,
                         res.status_code(),
                         req.url,
@@ -1015,7 +1031,7 @@ fn update_merge_request(input: CallToolRequest) -> Result<CallToolResult, Error>
             "{}/projects/{}/merge_requests/{}",
             gitlab_url,
             urlencode_if_needed(project_id),
-            merge_request_iid 
+            merge_request_iid
         );
 
         let mut body_map = serde_json::Map::new();
@@ -1069,7 +1085,9 @@ fn update_merge_request(input: CallToolRequest) -> Result<CallToolResult, Error>
             is_error: Some(true),
             content: vec![Content {
                 annotations: None,
-                text: Some("Please provide project_id, merge_request_iid, title, and description".into()),
+                text: Some(
+                    "Please provide project_id, merge_request_iid, title, and description".into(),
+                ),
                 mime_type: None,
                 r#type: ContentType::Text,
                 data: None,
@@ -1555,7 +1573,7 @@ fn gl_get_repo_tree(input: CallToolRequest) -> Result<CallToolResult, Error> {
                 // Log this or return a partial result with a warning if desired
                 // For now, just break and use what we have.
                 // Consider returning an error if this limit is hit.
-                break; 
+                break;
             }
 
             let mut url_params = vec![
@@ -1643,7 +1661,7 @@ fn gl_get_repo_tree(input: CallToolRequest) -> Result<CallToolResult, Error> {
             }
             current_page_number += 1;
         }
-        
+
         // Proceed with building the tree from all_entries
         match build_and_format_tree_from_entries(all_entries, requested_path_opt, project_id) {
             Ok(tree_string) => Ok(CallToolResult {

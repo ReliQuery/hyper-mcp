@@ -122,10 +122,9 @@ fn read_multiple_files(input: CallToolRequest) -> Result<CallToolResult, Error> 
 
 fn write_file(input: CallToolRequest) -> Result<CallToolResult, Error> {
     let args = input.params.arguments.clone().unwrap_or_default();
-    if let (Some(Value::String(path)), Some(Value::String(content))) = (
-        args.get("path"),
-        args.get("content"),
-    ) {
+    if let (Some(Value::String(path)), Some(Value::String(content))) =
+        (args.get("path"), args.get("content"))
+    {
         match fs::write(path, content) {
             Ok(_) => Ok(CallToolResult {
                 is_error: None,
@@ -164,14 +163,10 @@ fn write_file(input: CallToolRequest) -> Result<CallToolResult, Error> {
 
 fn edit_file(input: CallToolRequest) -> Result<CallToolResult, Error> {
     let args = input.params.arguments.clone().unwrap_or_default();
-    if let (Some(Value::String(path)), Some(Value::String(content))) = (
-        args.get("path"),
-        args.get("content"),
-    ) {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(path)?;
+    if let (Some(Value::String(path)), Some(Value::String(content))) =
+        (args.get("path"), args.get("content"))
+    {
+        let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
         file.write_all(content.as_bytes())?;
         Ok(CallToolResult {
             is_error: None,
@@ -294,10 +289,8 @@ fn list_dir(input: CallToolRequest) -> Result<CallToolResult, Error> {
 
 fn move_file(input: CallToolRequest) -> Result<CallToolResult, Error> {
     let args = input.params.arguments.clone().unwrap_or_default();
-    if let (Some(Value::String(from)), Some(Value::String(to))) = (
-        args.get("from"),
-        args.get("to"),
-    ) {
+    if let (Some(Value::String(from)), Some(Value::String(to))) = (args.get("from"), args.get("to"))
+    {
         match fs::rename(from, to) {
             Ok(_) => Ok(CallToolResult {
                 is_error: None,
@@ -336,10 +329,9 @@ fn move_file(input: CallToolRequest) -> Result<CallToolResult, Error> {
 
 fn search_files(input: CallToolRequest) -> Result<CallToolResult, Error> {
     let args = input.params.arguments.clone().unwrap_or_default();
-    if let (Some(Value::String(dir)), Some(Value::String(pattern))) = (
-        args.get("directory"),
-        args.get("pattern"),
-    ) {
+    if let (Some(Value::String(dir)), Some(Value::String(pattern))) =
+        (args.get("directory"), args.get("pattern"))
+    {
         let mut results = Vec::new();
         fn search_dir(dir: &Path, pattern: &str, results: &mut Vec<String>) -> io::Result<()> {
             for entry in fs::read_dir(dir)? {

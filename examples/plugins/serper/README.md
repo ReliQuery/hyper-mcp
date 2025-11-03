@@ -19,7 +19,7 @@ Call with:
         "env_vars": {
           "SERPER_API_KEY": "<your-serper-api-key>"
         },
-        "allowed_hosts": ["google.serper.dev"] 
+        "allowed_hosts": ["google.serper.dev"]
       }
     }
   ]

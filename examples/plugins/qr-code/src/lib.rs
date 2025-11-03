@@ -4,7 +4,7 @@ use base64::Engine;
 use extism_pdk::*;
 use pdk::types::*;
 use qrcode_png::{Color, QrCode, QrCodeEcc};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 pub(crate) fn call(input: CallToolRequest) -> Result<CallToolResult, Error> {
     extism_pdk::log!(

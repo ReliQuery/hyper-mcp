@@ -37,7 +37,7 @@ After each call to `add_tool`:
 
 1. **Initial state**: Only `add_tool` is available
 2. **Call `add_tool`**: Creates `tool_1` and notifies the server
-3. **Call `add_tool` again**: Creates `tool_2` and notifies the server  
+3. **Call `add_tool` again**: Creates `tool_2` and notifies the server
 4. **Call `tool_1`**: Returns information about being the first dynamically created tool
 
 ## Building
