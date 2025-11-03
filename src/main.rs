@@ -12,7 +12,7 @@ mod config;
 mod https_auth;
 mod logging;
 mod oci;
-mod plugins;
+mod service;
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3001";
 
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
     match cli.transport.as_str() {
         "stdio" => {
             tracing::info!("Starting hyper-mcp with stdio transport");
-            let service = plugins::PluginService::new(&cli)
+            let service = service::PluginService::new(&cli)
                 .await?
                 .serve(stdio())
                 .await
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
                     move || {
                         block_in_place(|| {
                             Handle::current()
-                                .block_on(async { plugins::PluginService::new(&cli).await })
+                                .block_on(async { service::PluginService::new(&cli).await })
                         })
                         .expect("Failed to create plugin service")
                     }
@@ -141,7 +141,7 @@ async fn main() -> Result<()> {
                     move || {
                         block_in_place(|| {
                             Handle::current()
-                                .block_on(async { plugins::PluginService::new(&cli).await })
+                                .block_on(async { service::PluginService::new(&cli).await })
                         })
                         .map_err(std::io::Error::other)
                     }
