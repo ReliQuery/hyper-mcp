@@ -12,6 +12,7 @@ mod config;
 mod https_auth;
 mod logging;
 mod oci;
+mod plugin;
 mod service;
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3001";
