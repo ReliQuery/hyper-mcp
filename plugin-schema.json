@@ -45,17 +45,6 @@
         "contentType": "application/json"
       }
     },
-    "list_resources": {
-      "description": "List all available resources.\n\nThis function should return a list of resources that the plugin provides. Resources are URI-based references to files, data, or services. Supports pagination via cursor.",
-      "input": {
-        "$ref": "#/components/schemas/ListResourcesRequest",
-        "contentType": "application/json"
-      },
-      "output": {
-        "$ref": "#/components/schemas/ListResourcesResult",
-        "contentType": "application/json"
-      }
-    },
     "list_resource_templates": {
       "description": "List all available resource templates.\n\nThis function should return a list of resource templates that the plugin provides. Templates are URI patterns that can match multiple resources. Supports pagination via cursor.",
       "input": {
@@ -64,6 +53,17 @@
       },
       "output": {
         "$ref": "#/components/schemas/ListResourceTemplatesResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_resources": {
+      "description": "List all available resources.\n\nThis function should return a list of resources that the plugin provides. Resources are URI-based references to files, data, or services. Supports pagination via cursor.",
+      "input": {
+        "$ref": "#/components/schemas/ListResourcesRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ListResourcesResult",
         "contentType": "application/json"
       }
     },
@@ -78,6 +78,13 @@
         "contentType": "application/json"
       }
     },
+    "on_roots_list_changed": {
+      "description": "Notification that the list of roots has changed.\n\nThis is an optional notification handler. If implemented, the plugin will be notified whenever the roots list changes on the client side. This allows plugins to react to changes in the file system roots or other root resources.",
+      "input": {
+        "$ref": "#/components/schemas/PluginNotificationContext",
+        "contentType": "application/json"
+      }
+    },
     "read_resource": {
       "description": "Read the contents of a resource by its URI.\n\nThis function is called when the user wants to read the contents of a specific resource. The plugin should retrieve and return the resource data with appropriate MIME type information.",
       "input": {
@@ -86,13 +93,6 @@
       },
       "output": {
         "$ref": "#/components/schemas/ReadResourceResult",
-        "contentType": "application/json"
-      }
-    },
-    "on_roots_list_changed": {
-      "description": "Notification that the list of roots has changed.\n\nThis is an optional notification handler. If implemented, the plugin will be notified whenever the roots list changes on the client side. This allows plugins to react to changes in the file system roots or other root resources.",
-      "input": {
-        "$ref": "#/components/schemas/PluginNotificationContext",
         "contentType": "application/json"
       }
     }
@@ -171,10 +171,7 @@
             "$ref": "#/components/schemas/PluginRequestContext"
           }
         },
-        "required": [
-          "request",
-          "context"
-        ]
+        "required": ["request", "context"]
       },
       "CallToolRequestParam": {
         "description": "Parameters for a tool call request",
@@ -189,9 +186,7 @@
             "description": "Arguments to pass to the tool"
           }
         },
-        "required": [
-          "name"
-        ]
+        "required": ["name"]
       },
       "CallToolResult": {
         "description": "Result of a tool call containing content blocks and optional structured output",
@@ -214,9 +209,7 @@
             "description": "Optional structured JSON result from the tool"
           }
         },
-        "required": [
-          "content"
-        ]
+        "required": ["content"]
       },
       "CompleteRequest": {
         "description": "Input for the complete export function",
@@ -229,10 +222,7 @@
             "$ref": "#/components/schemas/PluginRequestContext"
           }
         },
-        "required": [
-          "request",
-          "context"
-        ]
+        "required": ["request", "context"]
       },
       "CompleteRequestParam": {
         "description": "Parameters for a completion request",
@@ -244,10 +234,7 @@
             "properties": {
               "type": {
                 "type": "string",
-                "enum": [
-                  "ref/prompt",
-                  "ref/resource"
-                ]
+                "enum": ["ref/prompt", "ref/resource"]
               },
               "name": {
                 "type": "string",
@@ -272,20 +259,14 @@
                 "description": "Current value to complete"
               }
             },
-            "required": [
-              "name",
-              "value"
-            ]
+            "required": ["name", "value"]
           },
           "context": {
             "type": "object",
             "description": "Optional completion context with previously-resolved arguments"
           }
         },
-        "required": [
-          "ref",
-          "argument"
-        ]
+        "required": ["ref", "argument"]
       },
       "ContentBlock": {
         "description": "A content block that can be text, image, audio, or embedded resource",
@@ -293,12 +274,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": [
-              "text",
-              "image",
-              "audio",
-              "resource"
-            ],
+            "enum": ["text", "image", "audio", "resource"],
             "description": "The type of content"
           },
           "text": {
@@ -318,9 +294,7 @@
             "description": "URI of embedded resource"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "PluginNotificationContext": {
         "description": "Context information for notification-type plugin function calls. Contains metadata passed through the MCP protocol.",
@@ -331,9 +305,7 @@
             "description": "Additional metadata about the notification"
           }
         },
-        "required": [
-          "meta"
-        ]
+        "required": ["meta"]
       },
       "PluginRequestContext": {
         "description": "Context information for request-type plugin function calls. Contains the request ID and metadata passed through the MCP protocol.",
@@ -348,10 +320,7 @@
             "description": "Additional metadata about the request"
           }
         },
-        "required": [
-          "id",
-          "meta"
-        ]
+        "required": ["id", "meta"]
       }
     },
     "CompleteResult": {
@@ -378,14 +347,10 @@
               "description": "Whether there are more completions available"
             }
           },
-          "required": [
-            "values"
-          ]
+          "required": ["values"]
         }
       },
-      "required": [
-        "completion"
-      ]
+      "required": ["completion"]
     },
     "GetPromptRequest": {
       "description": "Input for the get_prompt export function",
@@ -398,10 +363,7 @@
           "$ref": "#/components/schemas/PluginRequestContext"
         }
       },
-      "required": [
-        "request",
-        "context"
-      ]
+      "required": ["request", "context"]
     },
     "GetPromptRequestParam": {
       "description": "Parameters for get_prompt request",
@@ -416,9 +378,7 @@
           "description": "Arguments for templating the prompt"
         }
       },
-      "required": [
-        "name"
-      ]
+      "required": ["name"]
     },
     "GetPromptResult": {
       "description": "Result of retrieving a prompt",
@@ -436,9 +396,7 @@
           "description": "Optional description of the prompt"
         }
       },
-      "required": [
-        "messages"
-      ]
+      "required": ["messages"]
     },
     "PromptMessage": {
       "description": "A message in a prompt",
@@ -446,10 +404,7 @@
       "properties": {
         "role": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant"
-          ],
+          "enum": ["user", "assistant"],
           "description": "Role of the message sender"
         },
         "content": {
@@ -457,10 +412,7 @@
           "description": "Message content"
         }
       },
-      "required": [
-        "role",
-        "content"
-      ]
+      "required": ["role", "content"]
     },
     "PromptMessageContent": {
       "description": "Content of a prompt message",
@@ -468,11 +420,7 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": [
-            "text",
-            "image",
-            "resource"
-          ],
+          "enum": ["text", "image", "resource"],
           "description": "The type of content"
         },
         "text": {
@@ -492,9 +440,7 @@
           "description": "URI of embedded resource"
         }
       },
-      "required": [
-        "type"
-      ]
+      "required": ["type"]
     },
     "ListPromptsRequest": {
       "description": "Input for the list_prompts export function",
@@ -508,9 +454,7 @@
           "description": "Optional pagination cursor"
         }
       },
-      "required": [
-        "context"
-      ]
+      "required": ["context"]
     },
     "ListPromptsResult": {
       "description": "Result of listing prompts",
@@ -528,9 +472,7 @@
           "description": "Optional cursor for pagination"
         }
       },
-      "required": [
-        "prompts"
-      ]
+      "required": ["prompts"]
     },
     "Prompt": {
       "description": "A prompt template",
@@ -556,9 +498,7 @@
           }
         }
       },
-      "required": [
-        "name"
-      ]
+      "required": ["name"]
     },
     "PromptArgument": {
       "description": "An argument that a prompt accepts",
@@ -581,9 +521,7 @@
           "description": "Whether this argument is required"
         }
       },
-      "required": [
-        "name"
-      ]
+      "required": ["name"]
     },
     "ListResourcesRequest": {
       "description": "Input for the list_resources export function",
@@ -597,9 +535,7 @@
           "description": "Optional pagination cursor"
         }
       },
-      "required": [
-        "context"
-      ]
+      "required": ["context"]
     },
     "ListResourcesResult": {
       "description": "Result of listing resources",
@@ -617,9 +553,7 @@
           "description": "Optional cursor for pagination"
         }
       },
-      "required": [
-        "resources"
-      ]
+      "required": ["resources"]
     },
     "Resource": {
       "description": "A resource available from the plugin",
@@ -650,9 +584,7 @@
           "description": "Size in bytes"
         }
       },
-      "required": [
-        "uri"
-      ]
+      "required": ["uri"]
     },
     "ListResourceTemplatesRequest": {
       "description": "Input for the list_resource_templates export function",
@@ -666,9 +598,7 @@
           "description": "Optional pagination cursor"
         }
       },
-      "required": [
-        "context"
-      ]
+      "required": ["context"]
     },
     "ListResourceTemplatesResult": {
       "description": "Result of listing resource templates",
@@ -686,9 +616,7 @@
           "description": "Optional cursor for pagination"
         }
       },
-      "required": [
-        "resourceTemplates"
-      ]
+      "required": ["resourceTemplates"]
     },
     "ResourceTemplate": {
       "description": "A template for resources matching a URI pattern",
@@ -715,9 +643,7 @@
           "description": "MIME type for resources matching this template"
         }
       },
-      "required": [
-        "uriTemplate"
-      ]
+      "required": ["uriTemplate"]
     },
     "ListToolsRequest": {
       "description": "Input for the list_tools export function",
@@ -731,9 +657,7 @@
           "description": "Optional pagination cursor"
         }
       },
-      "required": [
-        "context"
-      ]
+      "required": ["context"]
     },
     "ListToolsResult": {
       "description": "Result of listing tools",
@@ -751,9 +675,7 @@
           "description": "Optional cursor for pagination"
         }
       },
-      "required": [
-        "tools"
-      ]
+      "required": ["tools"]
     },
     "Tool": {
       "description": "A tool offered by the plugin",
@@ -777,9 +699,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": [
-                "object"
-              ]
+              "enum": ["object"]
             },
             "properties": {
               "type": "object",
@@ -793,19 +713,14 @@
               "description": "Required properties"
             }
           },
-          "required": [
-            "type"
-          ]
+          "required": ["type"]
         },
         "outputSchema": {
           "type": "object",
           "description": "JSON Schema for tool output"
         }
       },
-      "required": [
-        "name",
-        "inputSchema"
-      ]
+      "required": ["name", "inputSchema"]
     },
     "ReadResourceRequest": {
       "description": "Input for the read_resource export function",
@@ -818,10 +733,7 @@
           "$ref": "#/components/schemas/PluginRequestContext"
         }
       },
-      "required": [
-        "request",
-        "context"
-      ]
+      "required": ["request", "context"]
     },
     "ReadResourceRequestParam": {
       "description": "Parameters for a read resource request",
@@ -832,9 +744,7 @@
           "description": "URI of the resource to read"
         }
       },
-      "required": [
-        "uri"
-      ]
+      "required": ["uri"]
     },
     "ReadResourceResult": {
       "description": "Result of reading a resource",
@@ -848,9 +758,7 @@
           }
         }
       },
-      "required": [
-        "contents"
-      ]
+      "required": ["contents"]
     },
     "ResourceContent": {
       "description": "Content of a resource",
@@ -873,9 +781,7 @@
           "description": "Base64-encoded binary content (for blob resources)"
         }
       },
-      "required": [
-        "uri"
-      ]
+      "required": ["uri"]
     },
     "CreateElicitationRequestParamWithTimeout": {
       "description": "Input for the create_elicitation import function",
@@ -891,9 +797,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": [
-                "object"
-              ]
+              "enum": ["object"]
             },
             "properties": {
               "type": "object",
@@ -907,20 +811,14 @@
               "description": "Required property names"
             }
           },
-          "required": [
-            "type",
-            "properties"
-          ]
+          "required": ["type", "properties"]
         },
         "timeout": {
           "type": "integer",
           "description": "Optional timeout in milliseconds"
         }
       },
-      "required": [
-        "message",
-        "requestedSchema"
-      ]
+      "required": ["message", "requestedSchema"]
     },
     "CreateElicitationResult": {
       "description": "Result of an elicitation request",
@@ -928,11 +826,7 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": [
-            "accept",
-            "decline",
-            "cancel"
-          ],
+          "enum": ["accept", "decline", "cancel"],
           "description": "User's action in response to elicitation"
         },
         "content": {
@@ -940,9 +834,7 @@
           "description": "Form data submitted by user (only present when action is accept)"
         }
       },
-      "required": [
-        "action"
-      ]
+      "required": ["action"]
     },
     "CreateMessageRequestParam": {
       "description": "Input for the create_message import function",
@@ -980,18 +872,11 @@
         },
         "includeContext": {
           "type": "string",
-          "enum": [
-            "none",
-            "thisServer",
-            "allServers"
-          ],
+          "enum": ["none", "thisServer", "allServers"],
           "description": "Context inclusion level"
         }
       },
-      "required": [
-        "messages",
-        "maxTokens"
-      ]
+      "required": ["messages", "maxTokens"]
     },
     "SamplingMessage": {
       "description": "A message in a sampling conversation",
@@ -999,10 +884,7 @@
       "properties": {
         "role": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant"
-          ],
+          "enum": ["user", "assistant"],
           "description": "Role of the message sender"
         },
         "content": {
@@ -1010,10 +892,7 @@
           "description": "Message content (text, image, or audio)"
         }
       },
-      "required": [
-        "role",
-        "content"
-      ]
+      "required": ["role", "content"]
     },
     "ModelPreferences": {
       "description": "Server preferences for model selection",
@@ -1066,10 +945,7 @@
         },
         "role": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant"
-          ],
+          "enum": ["user", "assistant"],
           "description": "Role of the generated message"
         },
         "stopReason": {
@@ -1077,11 +953,7 @@
           "description": "Optional reason sampling stopped"
         }
       },
-      "required": [
-        "content",
-        "model",
-        "role"
-      ]
+      "required": ["content", "model", "role"]
     },
     "ListRootsResult": {
       "description": "Result of listing roots",
@@ -1095,9 +967,7 @@
           }
         }
       },
-      "required": [
-        "roots"
-      ]
+      "required": ["roots"]
     },
     "Root": {
       "description": "A root directory or resource",
@@ -1112,9 +982,7 @@
           "description": "Optional human-readable name"
         }
       },
-      "required": [
-        "uri"
-      ]
+      "required": ["uri"]
     },
     "LoggingMessageNotificationParam": {
       "description": "Parameters for notify_logging_message",
@@ -1142,10 +1010,7 @@
           "description": "Optional logger name"
         }
       },
-      "required": [
-        "level",
-        "data"
-      ]
+      "required": ["level", "data"]
     },
     "ProgressNotificationParam": {
       "description": "Parameters for notify_progress to track long-running operations",
@@ -1164,9 +1029,7 @@
           "description": "Optional progress message describing current operation"
         }
       },
-      "required": [
-        "progress"
-      ]
+      "required": ["progress"]
     },
     "ResourceUpdatedNotificationParam": {
       "description": "Parameters for notify_resource_updated to notify about specific resource updates",
@@ -1177,9 +1040,7 @@
           "description": "URI of the updated resource"
         }
       },
-      "required": [
-        "uri"
-      ]
+      "required": ["uri"]
     }
   }
 }
