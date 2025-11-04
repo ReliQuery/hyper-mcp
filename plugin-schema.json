@@ -1,0 +1,1185 @@
+{
+  "version": "v1-draft",
+  "exports": {
+    "call_tool": {
+      "description": "Execute a tool call. This is the primary entry point for tool execution in plugins.\n\nThe plugin receives a tool call request with the tool name and arguments, along with request context information. The plugin should execute the requested tool and return the result with content blocks and optional structured output.",
+      "input": {
+        "$ref": "#/components/schemas/CallToolRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/CallToolResult",
+        "contentType": "application/json"
+      }
+    },
+    "complete": {
+      "description": "Provide completion suggestions for a partially-typed input.\n\nThis function is called when the user requests autocompletion. The plugin should analyze the partial input and return matching completion suggestions based on the reference (prompt or resource) and argument context.",
+      "input": {
+        "$ref": "#/components/schemas/CompleteRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/CompleteResult",
+        "contentType": "application/json"
+      }
+    },
+    "get_prompt": {
+      "description": "Retrieve a specific prompt by name.\n\nThis function is called when the user requests a specific prompt. The plugin should return the prompt details including messages and optional description.",
+      "input": {
+        "$ref": "#/components/schemas/GetPromptRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/GetPromptResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_prompts": {
+      "description": "List all available prompts.\n\nThis function should return a list of prompts that the plugin provides. Each prompt should include its name and a brief description of what it does. Supports pagination via cursor.",
+      "input": {
+        "$ref": "#/components/schemas/ListPromptsRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ListPromptsResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_resources": {
+      "description": "List all available resources.\n\nThis function should return a list of resources that the plugin provides. Resources are URI-based references to files, data, or services. Supports pagination via cursor.",
+      "input": {
+        "$ref": "#/components/schemas/ListResourcesRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ListResourcesResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_resource_templates": {
+      "description": "List all available resource templates.\n\nThis function should return a list of resource templates that the plugin provides. Templates are URI patterns that can match multiple resources. Supports pagination via cursor.",
+      "input": {
+        "$ref": "#/components/schemas/ListResourceTemplatesRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ListResourceTemplatesResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_tools": {
+      "description": "List all available tools.\n\nThis function should return a list of all tools that the plugin provides. Each tool should include its name, description, and input schema. Supports pagination via cursor.",
+      "input": {
+        "$ref": "#/components/schemas/ListToolsRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ListToolsResult",
+        "contentType": "application/json"
+      }
+    },
+    "read_resource": {
+      "description": "Read the contents of a resource by its URI.\n\nThis function is called when the user wants to read the contents of a specific resource. The plugin should retrieve and return the resource data with appropriate MIME type information.",
+      "input": {
+        "$ref": "#/components/schemas/ReadResourceRequest",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/ReadResourceResult",
+        "contentType": "application/json"
+      }
+    },
+    "on_roots_list_changed": {
+      "description": "Notification that the list of roots has changed.\n\nThis is an optional notification handler. If implemented, the plugin will be notified whenever the roots list changes on the client side. This allows plugins to react to changes in the file system roots or other root resources.",
+      "input": {
+        "$ref": "#/components/schemas/PluginNotificationContext",
+        "contentType": "application/json"
+      }
+    }
+  },
+  "imports": {
+    "create_elicitation": {
+      "description": "Request user input through the client's elicitation interface.\n\nPlugins can use this to ask users for input, decisions, or confirmations. This is useful for interactive plugins that need user guidance during tool execution. Returns the user's response with action and optional form data.",
+      "input": {
+        "$ref": "#/components/schemas/CreateElicitationRequestParamWithTimeout",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/CreateElicitationResult",
+        "contentType": "application/json"
+      }
+    },
+    "create_message": {
+      "description": "Request message creation through the client's sampling interface.\n\nPlugins can use this to have the client create messages, typically with AI assistance. This is used when plugins need intelligent text generation or analysis. Returns the generated message with model information.",
+      "input": {
+        "$ref": "#/components/schemas/CreateMessageRequestParam",
+        "contentType": "application/json"
+      },
+      "output": {
+        "$ref": "#/components/schemas/CreateMessageResult",
+        "contentType": "application/json"
+      }
+    },
+    "list_roots": {
+      "description": "List the client's root directories or resources.\n\nPlugins can query this to discover what root resources (typically file system roots) are available on the client side. This helps plugins understand the scope of resources they can access.",
+      "output": {
+        "$ref": "#/components/schemas/ListRootsResult",
+        "contentType": "application/json"
+      }
+    },
+    "notify_logging_message": {
+      "description": "Send a logging message to the client.\n\nPlugins use this to report diagnostic, informational, warning, or error messages. The client's logging level determines which messages are processed.",
+      "input": {
+        "$ref": "#/components/schemas/LoggingMessageNotificationParam",
+        "contentType": "application/json"
+      }
+    },
+    "notify_progress": {
+      "description": "Send a progress notification to the client.\n\nPlugins use this to report progress during long-running operations. This allows clients to display progress bars or status information to users.",
+      "input": {
+        "$ref": "#/components/schemas/ProgressNotificationParam",
+        "contentType": "application/json"
+      }
+    },
+    "notify_prompt_list_changed": {
+      "description": "Notify the client that the list of available prompts has changed.\n\nPlugins should call this when they add, remove, or modify their available prompts. The client will typically refresh its prompt list in response."
+    },
+    "notify_resource_list_changed": {
+      "description": "Notify the client that the list of available resources has changed.\n\nPlugins should call this when they add, remove, or modify their available resources. The client will typically refresh its resource list in response."
+    },
+    "notify_resource_updated": {
+      "description": "Notify the client that a specific resource has been updated.\n\nPlugins should call this when they modify the contents of a resource. The client can use this to invalidate caches and refresh resource displays.",
+      "input": {
+        "$ref": "#/components/schemas/ResourceUpdatedNotificationParam",
+        "contentType": "application/json"
+      }
+    },
+    "notify_tool_list_changed": {
+      "description": "Notify the client that the list of available tools has changed.\n\nPlugins should call this when they add, remove, or modify their available tools. The client will typically refresh its tool list in response."
+    }
+  },
+  "components": {
+    "schemas": {
+      "CallToolRequest": {
+        "description": "Input for the call_tool export function",
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/CallToolRequestParam"
+          },
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          }
+        },
+        "required": [
+          "request",
+          "context"
+        ]
+      },
+      "CallToolRequestParam": {
+        "description": "Parameters for a tool call request",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the tool to call"
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Arguments to pass to the tool"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CallToolResult": {
+        "description": "Result of a tool call containing content blocks and optional structured output",
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "array",
+            "description": "Array of content blocks representing the result",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            }
+          },
+          "isError": {
+            "type": "boolean",
+            "description": "Whether the tool call ended in an error. If not set, defaults to false.",
+            "default": false
+          },
+          "structuredContent": {
+            "type": "object",
+            "description": "Optional structured JSON result from the tool"
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "CompleteRequest": {
+        "description": "Input for the complete export function",
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/CompleteRequestParam"
+          },
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          }
+        },
+        "required": [
+          "request",
+          "context"
+        ]
+      },
+      "CompleteRequestParam": {
+        "description": "Parameters for a completion request",
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "description": "Reference to either a prompt or resource template",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ref/prompt",
+                  "ref/resource"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the prompt (when type is ref/prompt)"
+              },
+              "uri": {
+                "type": "string",
+                "description": "URI of the resource template (when type is ref/resource)"
+              }
+            }
+          },
+          "argument": {
+            "type": "object",
+            "description": "The argument being completed",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Name of the argument"
+              },
+              "value": {
+                "type": "string",
+                "description": "Current value to complete"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ]
+          },
+          "context": {
+            "type": "object",
+            "description": "Optional completion context with previously-resolved arguments"
+          }
+        },
+        "required": [
+          "ref",
+          "argument"
+        ]
+      },
+      "ContentBlock": {
+        "description": "A content block that can be text, image, audio, or embedded resource",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "resource"
+            ],
+            "description": "The type of content"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content (when type is 'text')"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type for the content (when type is 'image' or 'audio')"
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64-encoded data (when type is 'image' or 'audio')"
+          },
+          "uri": {
+            "type": "string",
+            "description": "URI of embedded resource"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "PluginNotificationContext": {
+        "description": "Context information for notification-type plugin function calls. Contains metadata passed through the MCP protocol.",
+        "type": "object",
+        "properties": {
+          "meta": {
+            "type": "object",
+            "description": "Additional metadata about the notification"
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "PluginRequestContext": {
+        "description": "Context information for request-type plugin function calls. Contains the request ID and metadata passed through the MCP protocol.",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this request"
+          },
+          "meta": {
+            "type": "object",
+            "description": "Additional metadata about the request"
+          }
+        },
+        "required": [
+          "id",
+          "meta"
+        ]
+      }
+    },
+    "CompleteResult": {
+      "description": "Result of a completion request",
+      "type": "object",
+      "properties": {
+        "completion": {
+          "type": "object",
+          "description": "Completion result with values",
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of completion values (max 100 items)"
+            },
+            "total": {
+              "type": "integer",
+              "description": "Total number of available completions"
+            },
+            "hasMore": {
+              "type": "boolean",
+              "description": "Whether there are more completions available"
+            }
+          },
+          "required": [
+            "values"
+          ]
+        }
+      },
+      "required": [
+        "completion"
+      ]
+    },
+    "GetPromptRequest": {
+      "description": "Input for the get_prompt export function",
+      "type": "object",
+      "properties": {
+        "request": {
+          "$ref": "#/components/schemas/GetPromptRequestParam"
+        },
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        }
+      },
+      "required": [
+        "request",
+        "context"
+      ]
+    },
+    "GetPromptRequestParam": {
+      "description": "Parameters for get_prompt request",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the prompt to retrieve"
+        },
+        "arguments": {
+          "type": "object",
+          "description": "Arguments for templating the prompt"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "GetPromptResult": {
+      "description": "Result of retrieving a prompt",
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "description": "Array of prompt messages",
+          "items": {
+            "$ref": "#/components/schemas/PromptMessage"
+          }
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description of the prompt"
+        }
+      },
+      "required": [
+        "messages"
+      ]
+    },
+    "PromptMessage": {
+      "description": "A message in a prompt",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "description": "Role of the message sender"
+        },
+        "content": {
+          "$ref": "#/components/schemas/ContentBlock",
+          "description": "Message content"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ]
+    },
+    "PromptMessageContent": {
+      "description": "Content of a prompt message",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "resource"
+          ],
+          "description": "The type of content"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text content (when type is 'text')"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type for the content (when type is 'image')"
+        },
+        "data": {
+          "type": "string",
+          "description": "Base64-encoded data (when type is 'image' or 'audio')"
+        },
+        "uri": {
+          "type": "string",
+          "description": "URI of embedded resource"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "ListPromptsRequest": {
+      "description": "Input for the list_prompts export function",
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Optional pagination cursor"
+        }
+      },
+      "required": [
+        "context"
+      ]
+    },
+    "ListPromptsResult": {
+      "description": "Result of listing prompts",
+      "type": "object",
+      "properties": {
+        "prompts": {
+          "type": "array",
+          "description": "Array of available prompts",
+          "items": {
+            "$ref": "#/components/schemas/Prompt"
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "description": "Optional cursor for pagination"
+        }
+      },
+      "required": [
+        "prompts"
+      ]
+    },
+    "Prompt": {
+      "description": "A prompt template",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name of the prompt"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of what the prompt does"
+        },
+        "arguments": {
+          "type": "array",
+          "description": "Optional prompt arguments",
+          "items": {
+            "$ref": "#/components/schemas/PromptArgument"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "PromptArgument": {
+      "description": "An argument that a prompt accepts",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the argument"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the argument"
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this argument is required"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "ListResourcesRequest": {
+      "description": "Input for the list_resources export function",
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Optional pagination cursor"
+        }
+      },
+      "required": [
+        "context"
+      ]
+    },
+    "ListResourcesResult": {
+      "description": "Result of listing resources",
+      "type": "object",
+      "properties": {
+        "resources": {
+          "type": "array",
+          "description": "Array of available resources",
+          "items": {
+            "$ref": "#/components/schemas/Resource"
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "description": "Optional cursor for pagination"
+        }
+      },
+      "required": [
+        "resources"
+      ]
+    },
+    "Resource": {
+      "description": "A resource available from the plugin",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "URI of the resource"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the resource"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the resource"
+        },
+        "size": {
+          "type": "integer",
+          "description": "Size in bytes"
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "ListResourceTemplatesRequest": {
+      "description": "Input for the list_resource_templates export function",
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Optional pagination cursor"
+        }
+      },
+      "required": [
+        "context"
+      ]
+    },
+    "ListResourceTemplatesResult": {
+      "description": "Result of listing resource templates",
+      "type": "object",
+      "properties": {
+        "resourceTemplates": {
+          "type": "array",
+          "description": "Array of resource templates",
+          "items": {
+            "$ref": "#/components/schemas/ResourceTemplate"
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "description": "Optional cursor for pagination"
+        }
+      },
+      "required": [
+        "resourceTemplates"
+      ]
+    },
+    "ResourceTemplate": {
+      "description": "A template for resources matching a URI pattern",
+      "type": "object",
+      "properties": {
+        "uriTemplate": {
+          "type": "string",
+          "description": "RFC 6570 URI template pattern"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the template"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type for resources matching this template"
+        }
+      },
+      "required": [
+        "uriTemplate"
+      ]
+    },
+    "ListToolsRequest": {
+      "description": "Input for the list_tools export function",
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Optional pagination cursor"
+        }
+      },
+      "required": [
+        "context"
+      ]
+    },
+    "ListToolsResult": {
+      "description": "Result of listing tools",
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "description": "Array of available tools",
+          "items": {
+            "$ref": "#/components/schemas/Tool"
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "description": "Optional cursor for pagination"
+        }
+      },
+      "required": [
+        "tools"
+      ]
+    },
+    "Tool": {
+      "description": "A tool offered by the plugin",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name of the tool"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of what the tool does"
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "JSON Schema for tool input arguments",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "object"
+              ]
+            },
+            "properties": {
+              "type": "object",
+              "description": "Schema properties"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Required properties"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "JSON Schema for tool output"
+        }
+      },
+      "required": [
+        "name",
+        "inputSchema"
+      ]
+    },
+    "ReadResourceRequest": {
+      "description": "Input for the read_resource export function",
+      "type": "object",
+      "properties": {
+        "request": {
+          "$ref": "#/components/schemas/ReadResourceRequestParam"
+        },
+        "context": {
+          "$ref": "#/components/schemas/PluginRequestContext"
+        }
+      },
+      "required": [
+        "request",
+        "context"
+      ]
+    },
+    "ReadResourceRequestParam": {
+      "description": "Parameters for a read resource request",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "URI of the resource to read"
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "ReadResourceResult": {
+      "description": "Result of reading a resource",
+      "type": "object",
+      "properties": {
+        "contents": {
+          "type": "array",
+          "description": "Array of resource content blocks",
+          "items": {
+            "$ref": "#/components/schemas/ResourceContent"
+          }
+        }
+      },
+      "required": [
+        "contents"
+      ]
+    },
+    "ResourceContent": {
+      "description": "Content of a resource",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "URI of the resource"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the content"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text content (for text resources)"
+        },
+        "blob": {
+          "type": "string",
+          "description": "Base64-encoded binary content (for blob resources)"
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "CreateElicitationRequestParamWithTimeout": {
+      "description": "Input for the create_elicitation import function",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Message to present to the user"
+        },
+        "requestedSchema": {
+          "type": "object",
+          "description": "Schema for the requested user input",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "object"
+              ]
+            },
+            "properties": {
+              "type": "object",
+              "description": "Primitive schema properties (no nesting)"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Required property names"
+            }
+          },
+          "required": [
+            "type",
+            "properties"
+          ]
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Optional timeout in milliseconds"
+        }
+      },
+      "required": [
+        "message",
+        "requestedSchema"
+      ]
+    },
+    "CreateElicitationResult": {
+      "description": "Result of an elicitation request",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "decline",
+            "cancel"
+          ],
+          "description": "User's action in response to elicitation"
+        },
+        "content": {
+          "type": "object",
+          "description": "Form data submitted by user (only present when action is accept)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "CreateMessageRequestParam": {
+      "description": "Input for the create_message import function",
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "description": "Conversation messages",
+          "items": {
+            "$ref": "#/components/schemas/SamplingMessage"
+          }
+        },
+        "maxTokens": {
+          "type": "integer",
+          "description": "Maximum tokens to sample"
+        },
+        "systemPrompt": {
+          "type": "string",
+          "description": "Optional system prompt"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Sampling temperature"
+        },
+        "stopSequences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Stop sequences"
+        },
+        "modelPreferences": {
+          "$ref": "#/components/schemas/ModelPreferences",
+          "description": "Preferences for model selection"
+        },
+        "includeContext": {
+          "type": "string",
+          "enum": [
+            "none",
+            "thisServer",
+            "allServers"
+          ],
+          "description": "Context inclusion level"
+        }
+      },
+      "required": [
+        "messages",
+        "maxTokens"
+      ]
+    },
+    "SamplingMessage": {
+      "description": "A message in a sampling conversation",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "description": "Role of the message sender"
+        },
+        "content": {
+          "type": "object",
+          "description": "Message content (text, image, or audio)"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ]
+    },
+    "ModelPreferences": {
+      "description": "Server preferences for model selection",
+      "type": "object",
+      "properties": {
+        "costPriority": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Priority for cost (0-1)"
+        },
+        "speedPriority": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Priority for speed (0-1)"
+        },
+        "intelligencePriority": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Priority for intelligence (0-1)"
+        },
+        "hints": {
+          "type": "array",
+          "description": "Model name hints",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Suggested model name or family"
+              }
+            }
+          }
+        }
+      }
+    },
+    "CreateMessageResult": {
+      "description": "Result of message creation",
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/components/schemas/ContentBlock",
+          "description": "Generated message content"
+        },
+        "model": {
+          "type": "string",
+          "description": "Name of the model used"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "description": "Role of the generated message"
+        },
+        "stopReason": {
+          "type": "string",
+          "description": "Optional reason sampling stopped"
+        }
+      },
+      "required": [
+        "content",
+        "model",
+        "role"
+      ]
+    },
+    "ListRootsResult": {
+      "description": "Result of listing roots",
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "description": "Array of root directories/resources",
+          "items": {
+            "$ref": "#/components/schemas/Root"
+          }
+        }
+      },
+      "required": [
+        "roots"
+      ]
+    },
+    "Root": {
+      "description": "A root directory or resource",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "URI of the root (typically file://)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional human-readable name"
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "LoggingMessageNotificationParam": {
+      "description": "Parameters for notify_logging_message",
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "notice",
+            "warning",
+            "error",
+            "critical",
+            "alert",
+            "emergency"
+          ],
+          "description": "Logging level (syslog severity)"
+        },
+        "data": {
+          "description": "Data to log (any JSON-serializable type)"
+        },
+        "logger": {
+          "type": "string",
+          "description": "Optional logger name"
+        }
+      },
+      "required": [
+        "level",
+        "data"
+      ]
+    },
+    "ProgressNotificationParam": {
+      "description": "Parameters for notify_progress to track long-running operations",
+      "type": "object",
+      "properties": {
+        "progress": {
+          "type": "number",
+          "description": "Progress percentage (0-100) or current units completed"
+        },
+        "total": {
+          "type": "number",
+          "description": "Optional total units of work"
+        },
+        "message": {
+          "type": "string",
+          "description": "Optional progress message describing current operation"
+        }
+      },
+      "required": [
+        "progress"
+      ]
+    },
+    "ResourceUpdatedNotificationParam": {
+      "description": "Parameters for notify_resource_updated to notify about specific resource updates",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "URI of the updated resource"
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    }
+  }
+}
