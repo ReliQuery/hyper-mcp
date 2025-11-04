@@ -11,7 +11,7 @@ Call with:
     // {},
     {
         "name": "memory",
-        "path": "/home/anh/Code/hyper-mcp/examples/plugins/memory/target/wasm32-wasip1/release/plugin.wasm",
+        "path": "/home/anh/Code/hyper-mcp/examples/plugins/v1/memory/target/wasm32-wasip1/release/plugin.wasm",
         "runtime_config": {
           "allowed_paths": ["/tmp"],
           "env_vars": {

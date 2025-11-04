@@ -43,7 +43,7 @@ After each call to `add_tool`:
 ## Building
 
 ```bash
-cd hyper-mcp/examples/plugins/tool-list-changed
+cd hyper-mcp/examples/plugins/v1/tool-list-changed
 cargo build --target wasm32-unknown-unknown --release
 ```
 

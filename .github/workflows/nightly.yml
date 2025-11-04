@@ -2,7 +2,7 @@ name: Nightly Release
 
 on:
   schedule:
-    - cron: '0 17 * * *' # midnight GMT+7
+    - cron: "0 17 * * *" # midnight GMT+7
   workflow_dispatch:
 
 env:
@@ -67,7 +67,7 @@ jobs:
       - name: Build and push plugin images
         if: matrix.arch == 'amd64'
         run: |
-          for plugin in examples/plugins/*/; do
+          for plugin in examples/plugins/v1/*/; do
             plugin_name=$(basename $plugin)
             echo "Building plugin: $plugin_name"
 

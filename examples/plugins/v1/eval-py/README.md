@@ -12,7 +12,7 @@ An example of using [RustPython](https://github.com/RustPython/RustPython) to ev
   "plugins": [
     {
       "name": "eval_py",
-      "path": "/home/anh/Code/hyper-mcp/examples/plugins/eval-py/target/wasm32-wasip1/release/plugin.wasm"
+      "path": "/home/anh/Code/hyper-mcp/examples/plugins/v1/eval-py/target/wasm32-wasip1/release/plugin.wasm"
     }
   ]
 }

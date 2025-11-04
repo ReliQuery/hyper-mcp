@@ -1224,6 +1224,7 @@ mod tests {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("examples");
         path.push("plugins");
+        path.push("v1");
         path.push("time");
         path.push("time.wasm");
         path
@@ -1237,6 +1238,7 @@ mod tests {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("examples");
         path.push("plugins");
+        path.push("v1");
         path.push("tool-list-changed");
         path.push("tool_list_changed.wasm");
         path
