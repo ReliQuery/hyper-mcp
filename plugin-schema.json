@@ -171,7 +171,10 @@
             "$ref": "#/components/schemas/PluginRequestContext"
           }
         },
-        "required": ["request", "context"]
+        "required": [
+          "request",
+          "context"
+        ]
       },
       "CallToolRequestParam": {
         "description": "Parameters for a tool call request",
@@ -186,7 +189,9 @@
             "description": "Arguments to pass to the tool"
           }
         },
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       },
       "CallToolResult": {
         "description": "Result of a tool call containing content blocks and optional structured output",
@@ -209,7 +214,9 @@
             "description": "Optional structured JSON result from the tool"
           }
         },
-        "required": ["content"]
+        "required": [
+          "content"
+        ]
       },
       "CompleteRequest": {
         "description": "Input for the complete export function",
@@ -222,7 +229,10 @@
             "$ref": "#/components/schemas/PluginRequestContext"
           }
         },
-        "required": ["request", "context"]
+        "required": [
+          "request",
+          "context"
+        ]
       },
       "CompleteRequestParam": {
         "description": "Parameters for a completion request",
@@ -234,7 +244,10 @@
             "properties": {
               "type": {
                 "type": "string",
-                "enum": ["ref/prompt", "ref/resource"]
+                "enum": [
+                  "ref/prompt",
+                  "ref/resource"
+                ]
               },
               "name": {
                 "type": "string",
@@ -259,14 +272,53 @@
                 "description": "Current value to complete"
               }
             },
-            "required": ["name", "value"]
+            "required": [
+              "name",
+              "value"
+            ]
           },
           "context": {
             "type": "object",
             "description": "Optional completion context with previously-resolved arguments"
           }
         },
-        "required": ["ref", "argument"]
+        "required": [
+          "ref",
+          "argument"
+        ]
+      },
+      "CompleteResult": {
+        "description": "Result of a completion request",
+        "type": "object",
+        "properties": {
+          "completion": {
+            "type": "object",
+            "description": "Completion result with values",
+            "properties": {
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Array of completion values (max 100 items)"
+              },
+              "total": {
+                "type": "integer",
+                "description": "Total number of available completions"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "Whether there are more completions available"
+              }
+            },
+            "required": [
+              "values"
+            ]
+          }
+        },
+        "required": [
+          "completion"
+        ]
       },
       "ContentBlock": {
         "description": "A content block that can be text, image, audio, or embedded resource",
@@ -274,7 +326,12 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["text", "image", "audio", "resource"],
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "resource"
+            ],
             "description": "The type of content"
           },
           "text": {
@@ -294,7 +351,437 @@
             "description": "URI of embedded resource"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
+      },
+      "CreateElicitationRequestParamWithTimeout": {
+        "description": "Input for the create_elicitation import function",
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message to present to the user"
+          },
+          "requestedSchema": {
+            "type": "object",
+            "description": "Schema for the requested user input",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              },
+              "properties": {
+                "type": "object",
+                "description": "Primitive schema properties (no nesting)"
+              },
+              "required": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Required property names"
+              }
+            },
+            "required": [
+              "type",
+              "properties"
+            ]
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Optional timeout in milliseconds"
+          }
+        },
+        "required": [
+          "message",
+          "requestedSchema"
+        ]
+      },
+      "CreateElicitationResult": {
+        "description": "Result of an elicitation request",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "decline",
+              "cancel"
+            ],
+            "description": "User's action in response to elicitation"
+          },
+          "content": {
+            "type": "object",
+            "description": "Form data submitted by user (only present when action is accept)"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "CreateMessageRequestParam": {
+        "description": "Input for the create_message import function",
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "description": "Conversation messages",
+            "items": {
+              "$ref": "#/components/schemas/SamplingMessage"
+            }
+          },
+          "maxTokens": {
+            "type": "integer",
+            "description": "Maximum tokens to sample"
+          },
+          "systemPrompt": {
+            "type": "string",
+            "description": "Optional system prompt"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          },
+          "stopSequences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stop sequences"
+          },
+          "modelPreferences": {
+            "$ref": "#/components/schemas/ModelPreferences",
+            "description": "Preferences for model selection"
+          },
+          "includeContext": {
+            "type": "string",
+            "enum": [
+              "none",
+              "thisServer",
+              "allServers"
+            ],
+            "description": "Context inclusion level"
+          }
+        },
+        "required": [
+          "messages",
+          "maxTokens"
+        ]
+      },
+      "CreateMessageResult": {
+        "description": "Result of message creation",
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/ContentBlock",
+            "description": "Generated message content"
+          },
+          "model": {
+            "type": "string",
+            "description": "Name of the model used"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "description": "Role of the generated message"
+          },
+          "stopReason": {
+            "type": "string",
+            "description": "Optional reason sampling stopped"
+          }
+        },
+        "required": [
+          "content",
+          "model",
+          "role"
+        ]
+      },
+      "GetPromptRequest": {
+        "description": "Input for the get_prompt export function",
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/GetPromptRequestParam"
+          },
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          }
+        },
+        "required": [
+          "request",
+          "context"
+        ]
+      },
+      "GetPromptRequestParam": {
+        "description": "Parameters for get_prompt request",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the prompt to retrieve"
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Arguments for templating the prompt"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "GetPromptResult": {
+        "description": "Result of retrieving a prompt",
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "description": "Array of prompt messages",
+            "items": {
+              "$ref": "#/components/schemas/PromptMessage"
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the prompt"
+          }
+        },
+        "required": [
+          "messages"
+        ]
+      },
+      "ListPromptsRequest": {
+        "description": "Input for the list_prompts export function",
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Optional pagination cursor"
+          }
+        },
+        "required": [
+          "context"
+        ]
+      },
+      "ListPromptsResult": {
+        "description": "Result of listing prompts",
+        "type": "object",
+        "properties": {
+          "prompts": {
+            "type": "array",
+            "description": "Array of available prompts",
+            "items": {
+              "$ref": "#/components/schemas/Prompt"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Optional cursor for pagination"
+          }
+        },
+        "required": [
+          "prompts"
+        ]
+      },
+      "ListResourceTemplatesRequest": {
+        "description": "Input for the list_resource_templates export function",
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Optional pagination cursor"
+          }
+        },
+        "required": [
+          "context"
+        ]
+      },
+      "ListResourceTemplatesResult": {
+        "description": "Result of listing resource templates",
+        "type": "object",
+        "properties": {
+          "resourceTemplates": {
+            "type": "array",
+            "description": "Array of resource templates",
+            "items": {
+              "$ref": "#/components/schemas/ResourceTemplate"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Optional cursor for pagination"
+          }
+        },
+        "required": [
+          "resourceTemplates"
+        ]
+      },
+      "ListResourcesRequest": {
+        "description": "Input for the list_resources export function",
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Optional pagination cursor"
+          }
+        },
+        "required": [
+          "context"
+        ]
+      },
+      "ListResourcesResult": {
+        "description": "Result of listing resources",
+        "type": "object",
+        "properties": {
+          "resources": {
+            "type": "array",
+            "description": "Array of available resources",
+            "items": {
+              "$ref": "#/components/schemas/Resource"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Optional cursor for pagination"
+          }
+        },
+        "required": [
+          "resources"
+        ]
+      },
+      "ListRootsResult": {
+        "description": "Result of listing roots",
+        "type": "object",
+        "properties": {
+          "roots": {
+            "type": "array",
+            "description": "Array of root directories/resources",
+            "items": {
+              "$ref": "#/components/schemas/Root"
+            }
+          }
+        },
+        "required": [
+          "roots"
+        ]
+      },
+      "ListToolsRequest": {
+        "description": "Input for the list_tools export function",
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Optional pagination cursor"
+          }
+        },
+        "required": [
+          "context"
+        ]
+      },
+      "ListToolsResult": {
+        "description": "Result of listing tools",
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "description": "Array of available tools",
+            "items": {
+              "$ref": "#/components/schemas/Tool"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Optional cursor for pagination"
+          }
+        },
+        "required": [
+          "tools"
+        ]
+      },
+      "LoggingMessageNotificationParam": {
+        "description": "Parameters for notify_logging_message",
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "debug",
+              "info",
+              "notice",
+              "warning",
+              "error",
+              "critical",
+              "alert",
+              "emergency"
+            ],
+            "description": "Logging level (syslog severity)"
+          },
+          "data": {
+            "description": "Data to log (any JSON-serializable type)"
+          },
+          "logger": {
+            "type": "string",
+            "description": "Optional logger name"
+          }
+        },
+        "required": [
+          "level",
+          "data"
+        ]
+      },
+      "ModelPreferences": {
+        "description": "Server preferences for model selection",
+        "type": "object",
+        "properties": {
+          "costPriority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Priority for cost (0-1)"
+          },
+          "speedPriority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Priority for speed (0-1)"
+          },
+          "intelligencePriority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Priority for intelligence (0-1)"
+          },
+          "hints": {
+            "type": "array",
+            "description": "Model name hints",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Suggested model name or family"
+                }
+              }
+            }
+          }
+        }
       },
       "PluginNotificationContext": {
         "description": "Context information for notification-type plugin function calls. Contains metadata passed through the MCP protocol.",
@@ -305,7 +792,9 @@
             "description": "Additional metadata about the notification"
           }
         },
-        "required": ["meta"]
+        "required": [
+          "meta"
+        ]
       },
       "PluginRequestContext": {
         "description": "Context information for request-type plugin function calls. Contains the request ID and metadata passed through the MCP protocol.",
@@ -320,727 +809,377 @@
             "description": "Additional metadata about the request"
           }
         },
-        "required": ["id", "meta"]
-      }
-    },
-    "CompleteResult": {
-      "description": "Result of a completion request",
-      "type": "object",
-      "properties": {
-        "completion": {
-          "type": "object",
-          "description": "Completion result with values",
-          "properties": {
-            "values": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Array of completion values (max 100 items)"
-            },
-            "total": {
-              "type": "integer",
-              "description": "Total number of available completions"
-            },
-            "hasMore": {
-              "type": "boolean",
-              "description": "Whether there are more completions available"
+        "required": [
+          "id",
+          "meta"
+        ]
+      },
+      "ProgressNotificationParam": {
+        "description": "Parameters for notify_progress to track long-running operations",
+        "type": "object",
+        "properties": {
+          "progress": {
+            "type": "number",
+            "description": "Progress percentage (0-100) or current units completed"
+          },
+          "total": {
+            "type": "number",
+            "description": "Optional total units of work"
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional progress message describing current operation"
+          }
+        },
+        "required": [
+          "progress"
+        ]
+      },
+      "Prompt": {
+        "description": "A prompt template",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique name of the prompt"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of what the prompt does"
+          },
+          "arguments": {
+            "type": "array",
+            "description": "Optional prompt arguments",
+            "items": {
+              "$ref": "#/components/schemas/PromptArgument"
             }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "PromptArgument": {
+        "description": "An argument that a prompt accepts",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the argument"
           },
-          "required": ["values"]
-        }
-      },
-      "required": ["completion"]
-    },
-    "GetPromptRequest": {
-      "description": "Input for the get_prompt export function",
-      "type": "object",
-      "properties": {
-        "request": {
-          "$ref": "#/components/schemas/GetPromptRequestParam"
-        },
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        }
-      },
-      "required": ["request", "context"]
-    },
-    "GetPromptRequestParam": {
-      "description": "Parameters for get_prompt request",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Name of the prompt to retrieve"
-        },
-        "arguments": {
-          "type": "object",
-          "description": "Arguments for templating the prompt"
-        }
-      },
-      "required": ["name"]
-    },
-    "GetPromptResult": {
-      "description": "Result of retrieving a prompt",
-      "type": "object",
-      "properties": {
-        "messages": {
-          "type": "array",
-          "description": "Array of prompt messages",
-          "items": {
-            "$ref": "#/components/schemas/PromptMessage"
+          "title": {
+            "type": "string",
+            "description": "Human-readable title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the argument"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether this argument is required"
           }
         },
-        "description": {
-          "type": "string",
-          "description": "Optional description of the prompt"
-        }
+        "required": [
+          "name"
+        ]
       },
-      "required": ["messages"]
-    },
-    "PromptMessage": {
-      "description": "A message in a prompt",
-      "type": "object",
-      "properties": {
-        "role": {
-          "type": "string",
-          "enum": ["user", "assistant"],
-          "description": "Role of the message sender"
-        },
-        "content": {
-          "$ref": "#/components/schemas/ContentBlock",
-          "description": "Message content"
-        }
-      },
-      "required": ["role", "content"]
-    },
-    "PromptMessageContent": {
-      "description": "Content of a prompt message",
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": ["text", "image", "resource"],
-          "description": "The type of content"
-        },
-        "text": {
-          "type": "string",
-          "description": "Text content (when type is 'text')"
-        },
-        "mimeType": {
-          "type": "string",
-          "description": "MIME type for the content (when type is 'image')"
-        },
-        "data": {
-          "type": "string",
-          "description": "Base64-encoded data (when type is 'image' or 'audio')"
-        },
-        "uri": {
-          "type": "string",
-          "description": "URI of embedded resource"
-        }
-      },
-      "required": ["type"]
-    },
-    "ListPromptsRequest": {
-      "description": "Input for the list_prompts export function",
-      "type": "object",
-      "properties": {
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Optional pagination cursor"
-        }
-      },
-      "required": ["context"]
-    },
-    "ListPromptsResult": {
-      "description": "Result of listing prompts",
-      "type": "object",
-      "properties": {
-        "prompts": {
-          "type": "array",
-          "description": "Array of available prompts",
-          "items": {
-            "$ref": "#/components/schemas/Prompt"
+      "PromptMessage": {
+        "description": "A message in a prompt",
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "description": "Role of the message sender"
+          },
+          "content": {
+            "$ref": "#/components/schemas/ContentBlock",
+            "description": "Message content"
           }
         },
-        "nextCursor": {
-          "type": "string",
-          "description": "Optional cursor for pagination"
-        }
+        "required": [
+          "role",
+          "content"
+        ]
       },
-      "required": ["prompts"]
-    },
-    "Prompt": {
-      "description": "A prompt template",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Unique name of the prompt"
-        },
-        "title": {
-          "type": "string",
-          "description": "Human-readable title"
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of what the prompt does"
-        },
-        "arguments": {
-          "type": "array",
-          "description": "Optional prompt arguments",
-          "items": {
-            "$ref": "#/components/schemas/PromptArgument"
-          }
-        }
-      },
-      "required": ["name"]
-    },
-    "PromptArgument": {
-      "description": "An argument that a prompt accepts",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Name of the argument"
-        },
-        "title": {
-          "type": "string",
-          "description": "Human-readable title"
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of the argument"
-        },
-        "required": {
-          "type": "boolean",
-          "description": "Whether this argument is required"
-        }
-      },
-      "required": ["name"]
-    },
-    "ListResourcesRequest": {
-      "description": "Input for the list_resources export function",
-      "type": "object",
-      "properties": {
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Optional pagination cursor"
-        }
-      },
-      "required": ["context"]
-    },
-    "ListResourcesResult": {
-      "description": "Result of listing resources",
-      "type": "object",
-      "properties": {
-        "resources": {
-          "type": "array",
-          "description": "Array of available resources",
-          "items": {
-            "$ref": "#/components/schemas/Resource"
+      "PromptMessageContent": {
+        "description": "Content of a prompt message",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "resource"
+            ],
+            "description": "The type of content"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content (when type is 'text')"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type for the content (when type is 'image')"
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64-encoded data (when type is 'image' or 'audio')"
+          },
+          "uri": {
+            "type": "string",
+            "description": "URI of embedded resource"
           }
         },
-        "nextCursor": {
-          "type": "string",
-          "description": "Optional cursor for pagination"
-        }
+        "required": [
+          "type"
+        ]
       },
-      "required": ["resources"]
-    },
-    "Resource": {
-      "description": "A resource available from the plugin",
-      "type": "object",
-      "properties": {
-        "uri": {
-          "type": "string",
-          "description": "URI of the resource"
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable name"
-        },
-        "title": {
-          "type": "string",
-          "description": "Human-readable title"
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of the resource"
-        },
-        "mimeType": {
-          "type": "string",
-          "description": "MIME type of the resource"
-        },
-        "size": {
-          "type": "integer",
-          "description": "Size in bytes"
-        }
-      },
-      "required": ["uri"]
-    },
-    "ListResourceTemplatesRequest": {
-      "description": "Input for the list_resource_templates export function",
-      "type": "object",
-      "properties": {
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Optional pagination cursor"
-        }
-      },
-      "required": ["context"]
-    },
-    "ListResourceTemplatesResult": {
-      "description": "Result of listing resource templates",
-      "type": "object",
-      "properties": {
-        "resourceTemplates": {
-          "type": "array",
-          "description": "Array of resource templates",
-          "items": {
-            "$ref": "#/components/schemas/ResourceTemplate"
+      "ReadResourceRequest": {
+        "description": "Input for the read_resource export function",
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/ReadResourceRequestParam"
+          },
+          "context": {
+            "$ref": "#/components/schemas/PluginRequestContext"
           }
         },
-        "nextCursor": {
-          "type": "string",
-          "description": "Optional cursor for pagination"
-        }
+        "required": [
+          "request",
+          "context"
+        ]
       },
-      "required": ["resourceTemplates"]
-    },
-    "ResourceTemplate": {
-      "description": "A template for resources matching a URI pattern",
-      "type": "object",
-      "properties": {
-        "uriTemplate": {
-          "type": "string",
-          "description": "RFC 6570 URI template pattern"
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable name"
-        },
-        "title": {
-          "type": "string",
-          "description": "Human-readable title"
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of the template"
-        },
-        "mimeType": {
-          "type": "string",
-          "description": "MIME type for resources matching this template"
-        }
-      },
-      "required": ["uriTemplate"]
-    },
-    "ListToolsRequest": {
-      "description": "Input for the list_tools export function",
-      "type": "object",
-      "properties": {
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Optional pagination cursor"
-        }
-      },
-      "required": ["context"]
-    },
-    "ListToolsResult": {
-      "description": "Result of listing tools",
-      "type": "object",
-      "properties": {
-        "tools": {
-          "type": "array",
-          "description": "Array of available tools",
-          "items": {
-            "$ref": "#/components/schemas/Tool"
+      "ReadResourceRequestParam": {
+        "description": "Parameters for a read resource request",
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "URI of the resource to read"
           }
         },
-        "nextCursor": {
-          "type": "string",
-          "description": "Optional cursor for pagination"
-        }
+        "required": [
+          "uri"
+        ]
       },
-      "required": ["tools"]
-    },
-    "Tool": {
-      "description": "A tool offered by the plugin",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Unique name of the tool"
-        },
-        "title": {
-          "type": "string",
-          "description": "Human-readable title"
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of what the tool does"
-        },
-        "inputSchema": {
-          "type": "object",
-          "description": "JSON Schema for tool input arguments",
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": ["object"]
-            },
-            "properties": {
-              "type": "object",
-              "description": "Schema properties"
-            },
-            "required": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Required properties"
+      "ReadResourceResult": {
+        "description": "Result of reading a resource",
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "description": "Array of resource content blocks",
+            "items": {
+              "$ref": "#/components/schemas/ResourceContent"
             }
-          },
-          "required": ["type"]
-        },
-        "outputSchema": {
-          "type": "object",
-          "description": "JSON Schema for tool output"
-        }
-      },
-      "required": ["name", "inputSchema"]
-    },
-    "ReadResourceRequest": {
-      "description": "Input for the read_resource export function",
-      "type": "object",
-      "properties": {
-        "request": {
-          "$ref": "#/components/schemas/ReadResourceRequestParam"
-        },
-        "context": {
-          "$ref": "#/components/schemas/PluginRequestContext"
-        }
-      },
-      "required": ["request", "context"]
-    },
-    "ReadResourceRequestParam": {
-      "description": "Parameters for a read resource request",
-      "type": "object",
-      "properties": {
-        "uri": {
-          "type": "string",
-          "description": "URI of the resource to read"
-        }
-      },
-      "required": ["uri"]
-    },
-    "ReadResourceResult": {
-      "description": "Result of reading a resource",
-      "type": "object",
-      "properties": {
-        "contents": {
-          "type": "array",
-          "description": "Array of resource content blocks",
-          "items": {
-            "$ref": "#/components/schemas/ResourceContent"
-          }
-        }
-      },
-      "required": ["contents"]
-    },
-    "ResourceContent": {
-      "description": "Content of a resource",
-      "type": "object",
-      "properties": {
-        "uri": {
-          "type": "string",
-          "description": "URI of the resource"
-        },
-        "mimeType": {
-          "type": "string",
-          "description": "MIME type of the content"
-        },
-        "text": {
-          "type": "string",
-          "description": "Text content (for text resources)"
-        },
-        "blob": {
-          "type": "string",
-          "description": "Base64-encoded binary content (for blob resources)"
-        }
-      },
-      "required": ["uri"]
-    },
-    "CreateElicitationRequestParamWithTimeout": {
-      "description": "Input for the create_elicitation import function",
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string",
-          "description": "Message to present to the user"
-        },
-        "requestedSchema": {
-          "type": "object",
-          "description": "Schema for the requested user input",
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": ["object"]
-            },
-            "properties": {
-              "type": "object",
-              "description": "Primitive schema properties (no nesting)"
-            },
-            "required": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Required property names"
-            }
-          },
-          "required": ["type", "properties"]
-        },
-        "timeout": {
-          "type": "integer",
-          "description": "Optional timeout in milliseconds"
-        }
-      },
-      "required": ["message", "requestedSchema"]
-    },
-    "CreateElicitationResult": {
-      "description": "Result of an elicitation request",
-      "type": "object",
-      "properties": {
-        "action": {
-          "type": "string",
-          "enum": ["accept", "decline", "cancel"],
-          "description": "User's action in response to elicitation"
-        },
-        "content": {
-          "type": "object",
-          "description": "Form data submitted by user (only present when action is accept)"
-        }
-      },
-      "required": ["action"]
-    },
-    "CreateMessageRequestParam": {
-      "description": "Input for the create_message import function",
-      "type": "object",
-      "properties": {
-        "messages": {
-          "type": "array",
-          "description": "Conversation messages",
-          "items": {
-            "$ref": "#/components/schemas/SamplingMessage"
           }
         },
-        "maxTokens": {
-          "type": "integer",
-          "description": "Maximum tokens to sample"
-        },
-        "systemPrompt": {
-          "type": "string",
-          "description": "Optional system prompt"
-        },
-        "temperature": {
-          "type": "number",
-          "description": "Sampling temperature"
-        },
-        "stopSequences": {
-          "type": "array",
-          "items": {
-            "type": "string"
+        "required": [
+          "contents"
+        ]
+      },
+      "Resource": {
+        "description": "A resource available from the plugin",
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "URI of the resource"
           },
-          "description": "Stop sequences"
+          "name": {
+            "type": "string",
+            "description": "Human-readable name"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the resource"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type of the resource"
+          },
+          "size": {
+            "type": "integer",
+            "description": "Size in bytes"
+          }
         },
-        "modelPreferences": {
-          "$ref": "#/components/schemas/ModelPreferences",
-          "description": "Preferences for model selection"
-        },
-        "includeContext": {
-          "type": "string",
-          "enum": ["none", "thisServer", "allServers"],
-          "description": "Context inclusion level"
-        }
+        "required": [
+          "uri"
+        ]
       },
-      "required": ["messages", "maxTokens"]
-    },
-    "SamplingMessage": {
-      "description": "A message in a sampling conversation",
-      "type": "object",
-      "properties": {
-        "role": {
-          "type": "string",
-          "enum": ["user", "assistant"],
-          "description": "Role of the message sender"
+      "ResourceContent": {
+        "description": "Content of a resource",
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "URI of the resource"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type of the content"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content (for text resources)"
+          },
+          "blob": {
+            "type": "string",
+            "description": "Base64-encoded binary content (for blob resources)"
+          }
         },
-        "content": {
-          "type": "object",
-          "description": "Message content (text, image, or audio)"
-        }
+        "required": [
+          "uri"
+        ]
       },
-      "required": ["role", "content"]
-    },
-    "ModelPreferences": {
-      "description": "Server preferences for model selection",
-      "type": "object",
-      "properties": {
-        "costPriority": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Priority for cost (0-1)"
+      "ResourceTemplate": {
+        "description": "A template for resources matching a URI pattern",
+        "type": "object",
+        "properties": {
+          "uriTemplate": {
+            "type": "string",
+            "description": "RFC 6570 URI template pattern"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the template"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type for resources matching this template"
+          }
         },
-        "speedPriority": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Priority for speed (0-1)"
+        "required": [
+          "uriTemplate"
+        ]
+      },
+      "ResourceUpdatedNotificationParam": {
+        "description": "Parameters for notify_resource_updated to notify about specific resource updates",
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "URI of the updated resource"
+          }
         },
-        "intelligencePriority": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Priority for intelligence (0-1)"
+        "required": [
+          "uri"
+        ]
+      },
+      "Root": {
+        "description": "A root directory or resource",
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "URI of the root (typically file://)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional human-readable name"
+          }
         },
-        "hints": {
-          "type": "array",
-          "description": "Model name hints",
-          "items": {
+        "required": [
+          "uri"
+        ]
+      },
+      "SamplingMessage": {
+        "description": "A message in a sampling conversation",
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "description": "Role of the message sender"
+          },
+          "content": {
             "type": "object",
+            "description": "Message content (text, image, or audio)"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "Tool": {
+        "description": "A tool offered by the plugin",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique name of the tool"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of what the tool does"
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "JSON Schema for tool input arguments",
             "properties": {
-              "name": {
+              "type": {
                 "type": "string",
-                "description": "Suggested model name or family"
+                "enum": [
+                  "object"
+                ]
+              },
+              "properties": {
+                "type": "object",
+                "description": "Schema properties"
+              },
+              "required": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Required properties"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "outputSchema": {
+            "type": "object",
+            "description": "JSON Schema for tool output"
           }
-        }
+        },
+        "required": [
+          "name",
+          "inputSchema"
+        ]
       }
-    },
-    "CreateMessageResult": {
-      "description": "Result of message creation",
-      "type": "object",
-      "properties": {
-        "content": {
-          "$ref": "#/components/schemas/ContentBlock",
-          "description": "Generated message content"
-        },
-        "model": {
-          "type": "string",
-          "description": "Name of the model used"
-        },
-        "role": {
-          "type": "string",
-          "enum": ["user", "assistant"],
-          "description": "Role of the generated message"
-        },
-        "stopReason": {
-          "type": "string",
-          "description": "Optional reason sampling stopped"
-        }
-      },
-      "required": ["content", "model", "role"]
-    },
-    "ListRootsResult": {
-      "description": "Result of listing roots",
-      "type": "object",
-      "properties": {
-        "roots": {
-          "type": "array",
-          "description": "Array of root directories/resources",
-          "items": {
-            "$ref": "#/components/schemas/Root"
-          }
-        }
-      },
-      "required": ["roots"]
-    },
-    "Root": {
-      "description": "A root directory or resource",
-      "type": "object",
-      "properties": {
-        "uri": {
-          "type": "string",
-          "description": "URI of the root (typically file://)"
-        },
-        "name": {
-          "type": "string",
-          "description": "Optional human-readable name"
-        }
-      },
-      "required": ["uri"]
-    },
-    "LoggingMessageNotificationParam": {
-      "description": "Parameters for notify_logging_message",
-      "type": "object",
-      "properties": {
-        "level": {
-          "type": "string",
-          "enum": [
-            "debug",
-            "info",
-            "notice",
-            "warning",
-            "error",
-            "critical",
-            "alert",
-            "emergency"
-          ],
-          "description": "Logging level (syslog severity)"
-        },
-        "data": {
-          "description": "Data to log (any JSON-serializable type)"
-        },
-        "logger": {
-          "type": "string",
-          "description": "Optional logger name"
-        }
-      },
-      "required": ["level", "data"]
-    },
-    "ProgressNotificationParam": {
-      "description": "Parameters for notify_progress to track long-running operations",
-      "type": "object",
-      "properties": {
-        "progress": {
-          "type": "number",
-          "description": "Progress percentage (0-100) or current units completed"
-        },
-        "total": {
-          "type": "number",
-          "description": "Optional total units of work"
-        },
-        "message": {
-          "type": "string",
-          "description": "Optional progress message describing current operation"
-        }
-      },
-      "required": ["progress"]
-    },
-    "ResourceUpdatedNotificationParam": {
-      "description": "Parameters for notify_resource_updated to notify about specific resource updates",
-      "type": "object",
-      "properties": {
-        "uri": {
-          "type": "string",
-          "description": "URI of the updated resource"
-        }
-      },
-      "required": ["uri"]
     }
   }
 }
