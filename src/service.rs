@@ -721,6 +721,99 @@ impl ServerHandler for PluginService {
         plugin.call_tool(request, context).await
     }
 
+    async fn complete(
+        &self,
+        request: CompleteRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, McpError> {
+        tracing::info!("got completion/complete request {:?}", request);
+        let (plugin_name, request) = match request.r#ref {
+            Reference::Prompt(PromptReference { name, title }) => {
+                let (plugin_name, prompt_name) = match parse_namespaced_name(name.to_string()) {
+                    Ok((plugin_name, prompt_name)) => (plugin_name, prompt_name),
+                    Err(e) => {
+                        return Err(McpError::invalid_request(
+                            format!("Failed to parse prompt name: {e}"),
+                            None,
+                        ));
+                    }
+                };
+                let plugin_config = match self.config.plugins.get(&plugin_name) {
+                    Some(config) => config,
+                    None => {
+                        return Err(McpError::method_not_found::<CompleteRequestMethod>());
+                    }
+                };
+                if let Some(skip_prompts) = &plugin_config
+                    .runtime_config
+                    .as_ref()
+                    .and_then(|rc| rc.skip_prompts.clone())
+                    && skip_prompts.is_match(&prompt_name)
+                {
+                    tracing::warn!("Prompt {prompt_name} in skip_prompts");
+                    return Err(McpError::method_not_found::<CompleteRequestMethod>());
+                }
+                (
+                    plugin_name,
+                    CompleteRequestParam {
+                        r#ref: Reference::Prompt(PromptReference {
+                            name: prompt_name,
+                            title,
+                        }),
+                        argument: request.argument,
+                        context: request.context,
+                    },
+                )
+            }
+            Reference::Resource(ResourceReference { uri }) => {
+                let (plugin_name, resource_uri) = match parse_namespaced_uri(uri.to_string()) {
+                    Ok((plugin_name, resource_uri)) => (plugin_name, resource_uri),
+                    Err(e) => {
+                        return Err(McpError::invalid_request(
+                            format!("Failed to parse prompt name: {e}"),
+                            None,
+                        ));
+                    }
+                };
+                let plugin_config = match self.config.plugins.get(&plugin_name) {
+                    Some(config) => config,
+                    None => {
+                        return Err(McpError::method_not_found::<CompleteRequestMethod>());
+                    }
+                };
+                if let Some(skip_resource_templates) = &plugin_config
+                    .runtime_config
+                    .as_ref()
+                    .and_then(|rc| rc.skip_resource_templates.clone())
+                    && skip_resource_templates.is_match(&resource_uri)
+                {
+                    tracing::warn!("Resource {resource_uri} in skip_resources");
+                    return Err(McpError::method_not_found::<CompleteRequestMethod>());
+                }
+                (
+                    plugin_name,
+                    CompleteRequestParam {
+                        r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
+                        argument: request.argument,
+                        context: request.context,
+                    },
+                )
+            }
+        };
+
+        let Some(plugins) = self.plugins.get() else {
+            return Err(McpError::internal_error(
+                "Plugins not initialized".to_string(),
+                None,
+            ));
+        };
+
+        let Some(plugin) = plugins.get(&plugin_name) else {
+            return Err(McpError::method_not_found::<CallToolRequestMethod>());
+        };
+        plugin.complete(request, context).await
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             server_info: Implementation {
@@ -732,6 +825,7 @@ impl ServerHandler for PluginService {
                 ..Default::default()
             },
             capabilities: ServerCapabilities::builder()
+                .enable_completions()
                 .enable_logging()
                 .enable_prompts()
                 .enable_prompts_list_changed()
@@ -922,7 +1016,7 @@ impl ServerHandler for PluginService {
             let skip_resource_templates = plugin_cfg
                 .runtime_config
                 .as_ref()
-                .and_then(|rc| rc.skip_resource_templatess.clone())
+                .and_then(|rc| rc.skip_resource_templates.clone())
                 .unwrap_or_default();
             for resource_template in plugin_resource_templates.resource_templates {
                 if skip_resource_templates.is_match(resource_template.uri_template.as_str()) {

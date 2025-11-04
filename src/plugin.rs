@@ -54,6 +54,14 @@ pub trait Plugin: Send + Sync + Debug {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError>;
 
+    async fn complete(
+        &self,
+        request: CompleteRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, McpError> {
+        Ok(CompleteResult::default())
+    }
+
     async fn get_prompt(
         &self,
         request: GetPromptRequestParam,
@@ -302,6 +310,24 @@ impl Plugin for PluginV2 {
         call_plugin::<CallToolResult>(
             self,
             "call_tool",
+            serde_json::to_string(&json!({
+                "request": request,
+                "context": PluginRequestContext::from(&context),
+            }))
+            .expect("Failed to serialize request"),
+            context.ct,
+        )
+        .await
+    }
+
+    async fn complete(
+        &self,
+        request: CompleteRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, McpError> {
+        call_plugin::<CompleteResult>(
+            self,
+            "complete",
             serde_json::to_string(&json!({
                 "request": request,
                 "context": PluginRequestContext::from(&context),

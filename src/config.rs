@@ -189,7 +189,7 @@ pub struct RuntimeConfig {
     pub skip_prompts: Option<RegexSet>,
     // List of resource templatess to skip loading at runtime.
     #[serde(with = "skip_serde", default)]
-    pub skip_resource_templatess: Option<RegexSet>,
+    pub skip_resource_templates: Option<RegexSet>,
     // List of resources to skip loading at runtime.
     #[serde(with = "skip_serde", default)]
     pub skip_resources: Option<RegexSet>,
@@ -2229,7 +2229,7 @@ plugins:
     fn test_skip_tools_none() {
         let runtime_config = RuntimeConfig {
             skip_prompts: None,
-            skip_resource_templatess: None,
+            skip_resource_templates: None,
             skip_resources: None,
             skip_tools: None,
             allowed_hosts: None,
@@ -2336,7 +2336,7 @@ plugins:
 
         let runtime_config = RuntimeConfig {
             skip_prompts: None,
-            skip_resource_templatess: None,
+            skip_resource_templates: None,
             skip_resources: None,
             skip_tools: Some(regex_set),
             allowed_hosts: None,
