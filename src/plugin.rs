@@ -20,6 +20,7 @@ type PluginHandle = Arc<Mutex<extism::Plugin>>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginRequestContext {
     pub id: RequestId,
+    #[serde(rename = "_meta")]
     pub meta: Meta,
 }
 
@@ -34,6 +35,7 @@ impl<'a> From<&'a RequestContext<RoleServer>> for PluginRequestContext {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginNotificationContext {
+    #[serde(rename = "_meta")]
     pub meta: Meta,
 }
 
