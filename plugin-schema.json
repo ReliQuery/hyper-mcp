@@ -162,14 +162,12 @@
     "schemas": {
       "Annotations": {
         "description": "Content annotations for categorization and priority",
-        "type": "object",
         "properties": {
           "audience": {
             "description": "Intended audience for the resource",
             "type": "array",
             "items": {
-              "type": "string",
-              "enum": ["assitant", "user"]
+              "$ref": "#/components/schemas/Role"
             }
           },
           "lastModified": {
@@ -186,7 +184,6 @@
       },
       "AudioContent": {
         "description": "Audio content block",
-        "type": "object",
         "properties": {
           "data": {
             "type": "string",
@@ -197,23 +194,25 @@
             "description": "MIME type of the audio (e.g. 'audio/mpeg')"
           },
           "type": {
-            "type": "string",
-            "enum": ["audio"]
+            "$ref": "#/components/schemas/AudioType"
           },
           "annotations": {
             "$ref": "#/components/schemas/Annotations",
             "description": "Optional content annotations"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the content block"
           }
         },
         "required": ["data", "mimeType", "type"]
       },
+      "AudioType": {
+        "type": "string",
+        "enum": ["audio"]
+      },
       "BlobResourceContents": {
         "description": "Binary content of a resource",
-        "type": "object",
         "properties": {
           "blob": {
             "type": "string",
@@ -228,7 +227,7 @@
             "description": "MIME type of the binary content (e.g. 'application/pdf')"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the blob resource"
           }
         },
@@ -236,11 +235,9 @@
       },
       "BooleanSchema": {
         "description": "Schema for a boolean input",
-        "type": "object",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["boolean"]
+            "$ref": "#/components/schemas/BooleanType"
           },
           "description": {
             "type": "string",
@@ -257,9 +254,12 @@
         },
         "required": ["type"]
       },
+      "BooleanType": {
+        "type": "string",
+        "enum": ["boolean"]
+      },
       "CallToolRequest": {
         "description": "Input for the call_tool export function",
-        "type": "object",
         "properties": {
           "request": {
             "$ref": "#/components/schemas/CallToolRequestParam"
@@ -272,7 +272,6 @@
       },
       "CallToolRequestParam": {
         "description": "Parameters for a tool call request",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -287,27 +286,24 @@
       },
       "CallToolResult": {
         "description": "Result of a tool call containing content blocks and optional structured output",
-        "type": "object",
         "properties": {
           "content": {
             "type": "array",
-            "description": "Array of content blocks representing the result",
+            "description": "Array of TextContent, ImageContent, AudioContent, EmbeddedResource, or ResourceLinks representing the result",
             "items": {
-              "type": "object",
-              "description": "One of TextContent, ImageContent, AudioContent, EmbeddedResource, or ResourceLink"
+              "type": "object"
             }
           },
           "isError": {
             "type": "boolean",
-            "description": "Whether the tool call ended in an error. If not set, defaults to false.",
-            "default": false
+            "description": "Whether the tool call ended in an error. If not set, defaults to false."
           },
           "structuredContent": {
             "type": "object",
             "description": "Optional structured JSON result from the tool"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the tool call result"
           }
         },
@@ -315,7 +311,6 @@
       },
       "CompleteRequest": {
         "description": "Input for the complete export function",
-        "type": "object",
         "properties": {
           "request": {
             "$ref": "#/components/schemas/CompleteRequestParam"
@@ -328,26 +323,13 @@
       },
       "CompleteRequestParam": {
         "description": "Parameters for a completion request",
-        "type": "object",
         "properties": {
           "ref": {
             "type": "object",
             "description": "Reference to either a PromptReference or ResourceTemplateReference"
           },
           "argument": {
-            "type": "object",
-            "description": "The argument being completed",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Name of the argument"
-              },
-              "value": {
-                "type": "string",
-                "description": "Current value to complete"
-              }
-            },
-            "required": ["name", "value"]
+            "$ref": "#/components/schemas/CompleteRequestParamArgument"
           },
           "context": {
             "type": "object",
@@ -356,64 +338,59 @@
         },
         "required": ["ref", "argument"]
       },
+      "CompleteRequestParamArgument": {
+        "description": "The argument being completed",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the argument"
+          },
+          "value": {
+            "type": "string",
+            "description": "Current value to complete"
+          }
+        },
+        "required": ["name", "value"]
+      },
       "CompleteResult": {
         "description": "Result of a completion request",
-        "type": "object",
         "properties": {
           "completion": {
-            "type": "object",
-            "description": "Completion result with values",
-            "properties": {
-              "values": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Array of completion values (max 100 items)"
-              },
-              "total": {
-                "type": "integer",
-                "description": "Total number of available completions"
-              },
-              "hasMore": {
-                "type": "boolean",
-                "description": "Whether there are more completions available"
-              }
-            },
-            "required": ["values"]
+            "$ref": "#/components/schemas/CompleteResultCompletion"
           }
         },
         "required": ["completion"]
       },
+      "CompleteResultCompletion": {
+        "description": "Completion result with values",
+        "properties": {
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Array of completion values (max 100 items)"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of available completions"
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether there are more completions available"
+          }
+        },
+        "required": ["values"]
+      },
       "CreateElicitationRequestParamWithTimeout": {
         "description": "Input for the create_elicitation import function",
-        "type": "object",
         "properties": {
           "message": {
             "type": "string",
             "description": "Message to present to the user"
           },
           "requestedSchema": {
-            "type": "object",
-            "description": "Schema for the requested user input",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["object"]
-              },
-              "properties": {
-                "type": "object",
-                "description": "A map of StringSchema, NumberSchema, BooleanSchema or EnumSchema definitions (no nesting)"
-              },
-              "required": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Required property names"
-              }
-            },
-            "required": ["type", "properties"]
+            "$ref": "#/components/schemas/Schema"
           },
           "timeout": {
             "type": "integer",
@@ -424,12 +401,9 @@
       },
       "CreateElicitationResult": {
         "description": "Result of an elicitation request",
-        "type": "object",
         "properties": {
           "action": {
-            "type": "string",
-            "enum": ["accept", "decline", "cancel"],
-            "description": "User's action in response to elicitation"
+            "$ref": "#/components/schemas/CreateElicitationResultAction"
           },
           "content": {
             "type": "object",
@@ -438,16 +412,19 @@
         },
         "required": ["action"]
       },
+      "CreateElicitationResultAction": {
+        "description": "User's action in response to elicitation",
+        "type": "string",
+        "enum": ["accept", "decline", "cancel"]
+      },
       "CreateMessageRequestParam": {
         "description": "Input for the create_message import function",
-        "type": "object",
         "properties": {
           "messages": {
             "type": "array",
-            "description": "Conversation messages",
+            "description": "Conversation messages of of TextContent, ImageContent or AudioContent",
             "items": {
-              "type": "object",
-              "description": "One of TextContent, ImageContent or AudioContent"
+              "type": "object"
             }
           },
           "maxTokens": {
@@ -474,16 +451,18 @@
             "description": "Preferences for model selection"
           },
           "includeContext": {
-            "type": "string",
-            "enum": ["none", "thisServer", "allServers"],
-            "description": "Context inclusion level"
+            "$ref": "#/components/schemas/CreateMessageRequestParamIncludeContext"
           }
         },
         "required": ["messages", "maxTokens"]
       },
+      "CreateMessageRequestParamIncludeContext": {
+        "description": "Context inclusion level",
+        "type": "string",
+        "enum": ["none", "thisServer", "allServers"]
+      },
       "CreateMessageResult": {
         "description": "Result of message creation",
-        "type": "object",
         "properties": {
           "content": {
             "type": "object",
@@ -494,9 +473,7 @@
             "description": "Name of the model used"
           },
           "role": {
-            "type": "string",
-            "enum": ["user", "assistant"],
-            "description": "Role of the generated message"
+            "$ref": "#/components/schemas/Role"
           },
           "stopReason": {
             "type": "string",
@@ -507,18 +484,16 @@
       },
       "EmbeddedResource": {
         "description": "An embedded resource with data",
-        "type": "object",
         "properties": {
           "resource": {
             "type": "object",
             "description": "The embedded TextResourceContents or BlobResourceContents"
           },
           "type": {
-            "type": "string",
-            "enum": ["resource"]
+            "$ref": "#/components/schemas/ResourceType"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the embedded resource"
           },
           "annotations": {
@@ -530,11 +505,9 @@
       },
       "EnumSchema": {
         "description": "Schema for an enum input",
-        "type": "object",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["string"]
+            "$ref": "#/components/schemas/StringType"
           },
           "description": {
             "type": "string",
@@ -563,7 +536,6 @@
       },
       "GetPromptRequest": {
         "description": "Input for the get_prompt export function",
-        "type": "object",
         "properties": {
           "request": {
             "$ref": "#/components/schemas/GetPromptRequestParam"
@@ -576,7 +548,6 @@
       },
       "GetPromptRequestParam": {
         "description": "Parameters for get_prompt request",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -591,7 +562,6 @@
       },
       "GetPromptResult": {
         "description": "Result of retrieving a prompt",
-        "type": "object",
         "properties": {
           "messages": {
             "type": "array",
@@ -607,31 +577,8 @@
         },
         "required": ["messages"]
       },
-      "Icon": {
-        "description": "An icon with a src",
-        "type": "object",
-        "properties": {
-          "src": {
-            "type": "string",
-            "description": "URI of the icon image"
-          },
-          "mimeType": {
-            "type": "string",
-            "description": "MIME type of the icon image"
-          },
-          "sizes": {
-            "type": "array",
-            "description": "Array of icon sizes (e.g. '64x64')",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": ["src"]
-      },
       "ImageContent": {
         "description": "Image content block",
-        "type": "object",
         "properties": {
           "data": {
             "type": "string",
@@ -642,23 +589,25 @@
             "description": "MIME type of the image (e.g. 'image/png')"
           },
           "type": {
-            "type": "string",
-            "enum": ["image"]
+            "$ref": "#/components/schemas/ImageType"
           },
           "annotations": {
             "$ref": "#/components/schemas/Annotations",
             "description": "Optional content annotations"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the content block"
           }
         },
         "required": ["data", "mimeType", "type"]
       },
+      "ImageType": {
+        "type": "string",
+        "enum": ["image"]
+      },
       "ListPromptsRequest": {
         "description": "Input for the list_prompts export function",
-        "type": "object",
         "properties": {
           "context": {
             "$ref": "#/components/schemas/PluginRequestContext"
@@ -668,7 +617,6 @@
       },
       "ListPromptsResult": {
         "description": "Result of listing prompts",
-        "type": "object",
         "properties": {
           "prompts": {
             "type": "array",
@@ -682,7 +630,6 @@
       },
       "ListResourceTemplatesRequest": {
         "description": "Input for the list_resource_templates export function",
-        "type": "object",
         "properties": {
           "context": {
             "$ref": "#/components/schemas/PluginRequestContext"
@@ -692,7 +639,6 @@
       },
       "ListResourceTemplatesResult": {
         "description": "Result of listing resource templates",
-        "type": "object",
         "properties": {
           "resourceTemplates": {
             "type": "array",
@@ -710,7 +656,6 @@
       },
       "ListResourcesRequest": {
         "description": "Input for the list_resources export function",
-        "type": "object",
         "properties": {
           "context": {
             "$ref": "#/components/schemas/PluginRequestContext"
@@ -720,7 +665,6 @@
       },
       "ListResourcesResult": {
         "description": "Result of listing resources",
-        "type": "object",
         "properties": {
           "resources": {
             "type": "array",
@@ -734,7 +678,6 @@
       },
       "ListRootsResult": {
         "description": "Result of listing roots",
-        "type": "object",
         "properties": {
           "roots": {
             "type": "array",
@@ -748,7 +691,6 @@
       },
       "ListToolsRequest": {
         "description": "Input for the list_tools export function",
-        "type": "object",
         "properties": {
           "context": {
             "$ref": "#/components/schemas/PluginRequestContext"
@@ -758,7 +700,6 @@
       },
       "ListToolsResult": {
         "description": "Result of listing tools",
-        "type": "object",
         "properties": {
           "tools": {
             "type": "array",
@@ -770,26 +711,29 @@
         },
         "required": ["tools"]
       },
+      "LoggingLevel": {
+        "description": "Logging level (syslog severity)",
+        "type": "string",
+        "enum": [
+          "debug",
+          "info",
+          "notice",
+          "warning",
+          "error",
+          "critical",
+          "alert",
+          "emergency"
+        ]
+      },
       "LoggingMessageNotificationParam": {
         "description": "Parameters for notify_logging_message",
-        "type": "object",
         "properties": {
           "level": {
-            "type": "string",
-            "enum": [
-              "debug",
-              "info",
-              "notice",
-              "warning",
-              "error",
-              "critical",
-              "alert",
-              "emergency"
-            ],
-            "description": "Logging level (syslog severity)"
+            "$ref": "#/components/schemas/LoggingLevel"
           },
           "data": {
-            "description": "Data to log (any JSON-serializable type)"
+            "description": "Data to log (any JSON-serializable type)",
+            "type": "object"
           },
           "logger": {
             "type": "string",
@@ -798,13 +742,8 @@
         },
         "required": ["level", "data"]
       },
-      "Meta": {
-        "description": "Metadata information",
-        "type": "object"
-      },
       "ModelHint": {
         "description": "A hint for model selection",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -814,27 +753,20 @@
       },
       "ModelPreferences": {
         "description": "Server preferences for model selection",
-        "type": "object",
         "properties": {
           "costPriority": {
             "type": "number",
             "format": "float",
-            "minimum": 0,
-            "maximum": 1,
             "description": "Priority for cost (0-1)"
           },
           "speedPriority": {
             "type": "number",
             "format": "float",
-            "minimum": 0,
-            "maximum": 1,
             "description": "Priority for speed (0-1)"
           },
           "intelligencePriority": {
             "type": "number",
             "format": "float",
-            "minimum": 0,
-            "maximum": 1,
             "description": "Priority for intelligence (0-1)"
           },
           "hints": {
@@ -848,11 +780,9 @@
       },
       "NumberSchema": {
         "description": "Schema for a number input",
-        "type": "object",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["number", "integer"]
+            "$ref": "#/components/schemas/NumberType"
           },
           "description": {
             "type": "string",
@@ -873,12 +803,21 @@
         },
         "required": ["type"]
       },
+      "NumberType": {
+        "description": "Number type",
+        "type": "string",
+        "enum": ["number", "integer"]
+      },
+      "ObjectType": {
+        "description": "The type of schema requested for elicitation",
+        "type": "string",
+        "enum": ["object"]
+      },
       "PluginNotificationContext": {
         "description": "Context information for notification-type plugin function calls. Contains metadata passed through the MCP protocol.",
-        "type": "object",
         "properties": {
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Additional metadata about the notification"
           }
         },
@@ -886,14 +825,13 @@
       },
       "PluginRequestContext": {
         "description": "Context information for request-type plugin function calls. Contains the request ID and metadata passed through the MCP protocol.",
-        "type": "object",
         "properties": {
           "id": {
             "type": "string",
             "description": "Unique identifier for this request"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Additional metadata about the request"
           }
         },
@@ -901,7 +839,6 @@
       },
       "ProgressNotificationParam": {
         "description": "Parameters for notify_progress to track long-running operations",
-        "type": "object",
         "properties": {
           "progress": {
             "type": "number",
@@ -924,7 +861,6 @@
       },
       "Prompt": {
         "description": "A prompt template",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -950,7 +886,6 @@
       },
       "PromptArgument": {
         "description": "An argument that a prompt accepts",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -973,12 +908,9 @@
       },
       "PromptMessage": {
         "description": "A message in a prompt",
-        "type": "object",
         "properties": {
           "role": {
-            "type": "string",
-            "enum": ["user", "assistant"],
-            "description": "Role of the message sender"
+            "$ref": "#/components/schemas/Role"
           },
           "content": {
             "type": "object",
@@ -989,11 +921,9 @@
       },
       "PromptReference": {
         "description": "Reference to a prompt by name",
-        "type": "object",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["ref/prompt"]
+            "$ref": "#/components/schemas/PromptReferenceType"
           },
           "name": {
             "type": "string",
@@ -1006,9 +936,13 @@
         },
         "required": ["type", "name"]
       },
+      "PromptReferenceType": {
+        "description": "The type of prompt content",
+        "type": "string",
+        "enum": ["prompt"]
+      },
       "ReadResourceRequest": {
         "description": "Input for the read_resource export function",
-        "type": "object",
         "properties": {
           "request": {
             "$ref": "#/components/schemas/ReadResourceRequestParam"
@@ -1021,7 +955,6 @@
       },
       "ReadResourceRequestParam": {
         "description": "Parameters for a read resource request",
-        "type": "object",
         "properties": {
           "uri": {
             "type": "string",
@@ -1032,14 +965,12 @@
       },
       "ReadResourceResult": {
         "description": "Result of reading a resource",
-        "type": "object",
         "properties": {
           "contents": {
             "type": "array",
-            "description": "Array of resource content blocks",
+            "description": "Array of TextResourceContents or BlobResourceContents",
             "items": {
-              "type": "object",
-              "description": "One of TextResourceContents or BlobResourceContents"
+              "type": "object"
             }
           }
         },
@@ -1047,7 +978,6 @@
       },
       "Resource": {
         "description": "A resource available from the plugin",
-        "type": "object",
         "properties": {
           "uri": {
             "type": "string",
@@ -1082,7 +1012,6 @@
       },
       "ResourceLink": {
         "description": "A link to a resource by its URI",
-        "type": "object",
         "properties": {
           "uri": {
             "type": "string",
@@ -1113,19 +1042,27 @@
             "description": "Optional resource annotations"
           },
           "type": {
-            "type": "string",
-            "enum": ["resource_link"]
+            "$ref": "#/components/schemas/ResourceLinkType"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the resource link"
           }
         },
         "required": ["uri", "name", "type"]
       },
+      "ResourceLinkType": {
+        "description": "The type of resource link",
+        "type": "string",
+        "enum": ["resource_link"]
+      },
+      "ResourceReferenceType": {
+        "description": "The type of resource content",
+        "type": "string",
+        "enum": ["resource"]
+      },
       "ResourceTemplate": {
         "description": "A template for resources matching a URI pattern",
-        "type": "object",
         "properties": {
           "uriTemplate": {
             "type": "string",
@@ -1148,19 +1085,16 @@
             "description": "MIME type for resources matching this template"
           },
           "annotations": {
-            "$ref": "#/components/schemas/Annotations",
-            "description": "Optional template annotations"
+            "$ref": "#/components/schemas/Annotations"
           }
         },
         "required": ["name", "uriTemplate"]
       },
       "ResourceTemplateReference": {
         "description": "Reference to a resource template by URI pattern",
-        "type": "object",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["ref/resource"]
+            "$ref": "#/components/schemas/ResourceReferenceType"
           },
           "uri": {
             "type": "string",
@@ -1169,9 +1103,13 @@
         },
         "required": ["type", "uri"]
       },
+      "ResourceType": {
+        "description": "The type of resource content",
+        "type": "string",
+        "enum": ["resource"]
+      },
       "ResourceUpdatedNotificationParam": {
         "description": "Parameters for notify_resource_updated to notify about specific resource updates",
-        "type": "object",
         "properties": {
           "uri": {
             "type": "string",
@@ -1180,9 +1118,13 @@
         },
         "required": ["uri"]
       },
+      "Role": {
+        "description": "Intended audience/role for content or resources",
+        "type": "string",
+        "enum": ["assistant", "user"]
+      },
       "Root": {
         "description": "A root directory or resource",
-        "type": "object",
         "properties": {
           "uri": {
             "type": "string",
@@ -1195,13 +1137,31 @@
         },
         "required": ["uri"]
       },
-      "StringSchema": {
-        "description": "Schema for a string input",
-        "type": "object",
+      "Schema": {
+        "description": "A JSON Schema definitions",
         "properties": {
           "type": {
-            "type": "string",
-            "enum": ["string"]
+            "$ref": "#/components/schemas/ObjectType"
+          },
+          "properties": {
+            "type": "object",
+            "description": "A map of StringSchema, NumberSchema, BooleanSchema or EnumSchema definitions (no nesting)"
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required property names"
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "StringSchema": {
+        "description": "Schema for a string input",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/StringType"
           },
           "description": {
             "type": "string",
@@ -1216,9 +1176,7 @@
             "description": "Maximum length of the string"
           },
           "format": {
-            "type": "string",
-            "enum": ["email", "uri", "date-time", "date"],
-            "description": "Optional format of the string (e.g. 'email', 'uri')"
+            "$ref": "#/components/schemas/StringSchemaFormat"
           },
           "title": {
             "type": "string",
@@ -1227,24 +1185,32 @@
         },
         "required": ["type"]
       },
+      "StringSchemaFormat": {
+        "description": "Format of the string schema",
+        "type": "string",
+        "enum": ["email", "uri", "date", "date_time"]
+      },
+      "StringType": {
+        "description": "String type",
+        "type": "string",
+        "enum": ["string"]
+      },
       "TextContent": {
         "description": "Text content block",
-        "type": "object",
         "properties": {
           "text": {
             "type": "string",
             "description": "The text content"
           },
           "type": {
-            "type": "string",
-            "enum": ["text"]
+            "$ref": "#/components/schemas/TextType"
           },
           "annotations": {
             "$ref": "#/components/schemas/Annotations",
             "description": "Optional content annotations"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the content block"
           }
         },
@@ -1252,7 +1218,6 @@
       },
       "TextResourceContents": {
         "description": "Text content of a resource",
-        "type": "object",
         "properties": {
           "text": {
             "type": "string",
@@ -1267,15 +1232,18 @@
             "description": "MIME type of the text content (e.g. 'text/plain')"
           },
           "_meta": {
-            "$ref": "#/components/schemas/Meta",
+            "type": "object",
             "description": "Optional additional metadata about the text resource"
           }
         },
         "required": ["text", "uri"]
       },
+      "TextType": {
+        "type": "string",
+        "enum": ["text"]
+      },
       "Tool": {
         "description": "A tool offered by the plugin",
-        "type": "object",
         "properties": {
           "name": {
             "type": "string",
@@ -1290,47 +1258,10 @@
             "description": "Description of what the tool does"
           },
           "inputSchema": {
-            "type": "object",
-            "description": "JSON Schema for tool input arguments",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["object"]
-              },
-              "properties": {
-                "type": "object",
-                "description": "Schema properties"
-              },
-              "required": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Required properties"
-              }
-            },
-            "required": ["type"]
+            "$ref": "#/components/schemas/ToolSchema"
           },
           "outputSchema": {
-            "type": "object",
-            "description": "JSON Schema for tool output",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["object"]
-              },
-              "properties": {
-                "type": "object",
-                "description": "Schema properties"
-              },
-              "required": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Required properties"
-              }
-            }
+            "$ref": "#/components/schemas/ToolSchema"
           },
           "annotations": {
             "$ref": "#/components/schemas/Annotations",
@@ -1338,6 +1269,26 @@
           }
         },
         "required": ["name", "inputSchema"]
+      },
+      "ToolSchema": {
+        "description": "Schema for tool input/output arguments",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ObjectType"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Schema properties"
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required properties"
+          }
+        },
+        "required": ["type"]
       }
     }
   }
