@@ -7,7 +7,7 @@ use rmcp::{
     service::{NotificationContext, RequestContext, RoleServer},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     fmt::Debug,
     ops::Deref,
@@ -327,11 +327,35 @@ impl Plugin for PluginV2 {
         request: CompleteRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CompleteResult, McpError> {
+        #[derive(Debug, Clone)]
+        struct Helper(CompleteRequestParam);
+
+        impl Serialize for Helper {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut value = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+
+                if let Value::Object(root) = &mut value {
+                    if let Some(Value::Object(ref_obj)) = root.get_mut("ref") {
+                        if let Some(Value::String(t)) = ref_obj.get_mut("type") {
+                            if let Some(stripped) = t.strip_prefix("ref/") {
+                                *t = stripped.to_string();
+                            }
+                        }
+                    }
+                }
+
+                value.serialize(serializer)
+            }
+        }
+
         call_plugin::<CompleteResult>(
             self,
             "complete",
             serde_json::to_string(&json!({
-                "request": request,
+                "request": Helper(request),
                 "context": PluginRequestContext::from(&context),
             }))
             .expect("Failed to serialize request"),
