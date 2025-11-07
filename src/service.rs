@@ -16,6 +16,7 @@ use rmcp::{
     service::{NotificationContext, Peer, RequestContext, RoleServer},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::{DurationSeconds, serde_as};
 use sha2::{Digest, Sha256};
 use std::{
@@ -117,12 +118,57 @@ static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::ne
 
 #[allow(dead_code)]
 #[serde_as]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 struct CreateElicitationRequestParamWithTimeout {
     #[serde(flatten)]
     pub inner: CreateElicitationRequestParam,
     #[serde_as(as = "Option<DurationSeconds<f64>>")]
     pub timeout: Option<Duration>,
+}
+
+impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut value = Value::deserialize(deserializer)?;
+
+        fn patch_formats(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    if let Some(Value::String(s)) = map.get_mut("format") {
+                        if s == "date_time" {
+                            *s = "date-time".to_string();
+                        }
+                    }
+                    for val in map.values_mut() {
+                        patch_formats(val);
+                    }
+                }
+                Value::Array(arr) => {
+                    for val in arr.iter_mut() {
+                        patch_formats(val);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        patch_formats(&mut value);
+
+        #[serde_as]
+        #[derive(Deserialize)]
+        struct Helper {
+            #[serde(flatten)]
+            inner: CreateElicitationRequestParam,
+            #[serde_as(as = "Option<DurationSeconds<f64>>")]
+            timeout: Option<Duration>,
+        }
+
+        let Helper { inner, timeout } =
+            Helper::deserialize(value).map_err(serde::de::Error::custom)?;
+        Ok(CreateElicitationRequestParamWithTimeout { inner, timeout })
+    }
 }
 
 #[derive(Clone, Debug)]
