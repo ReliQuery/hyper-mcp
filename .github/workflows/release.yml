@@ -56,7 +56,7 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          for plugin in examples/plugins/v1/*/; do
+          for plugin in examples/plugins/v{1,2}/*/; do
             plugin_name=$(basename $plugin)
             plugin_base_image="${{ env.REGISTRY }}/${{ github.repository_owner }}/${plugin_name}-plugin"
 

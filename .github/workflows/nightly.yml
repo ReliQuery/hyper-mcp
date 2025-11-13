@@ -67,7 +67,7 @@ jobs:
       - name: Build and push plugin images
         if: matrix.arch == 'amd64'
         run: |
-          for plugin in examples/plugins/v1/*/; do
+          for plugin in examples/plugins/v{1,2}/*/; do
             plugin_name=$(basename $plugin)
             echo "Building plugin: $plugin_name"
 
