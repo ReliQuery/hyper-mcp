@@ -52,7 +52,3 @@ if ! (rustup target list --installed | grep -q '^wasm32-wasip1$'); then
     exit 1
   fi
 fi
-
-if ! (rustup target list --installed | grep -q '^wasm32-unknown-unknown$'); then
-  rustup target add wasm32-unknown-unknown
-fi
