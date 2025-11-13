@@ -88,16 +88,12 @@ A Dockerfile is included for containerized deployment. Build it with:
 docker build -t rstime:latest .
 ```
 
-## XTP Configuration
-
-The plugin uses the `xtp.toml` file for configuration. This file defines the plugin metadata and settings required by the MCP system.
-
 ## Testing
 
-The plugin includes comprehensive test coverage. Run tests with:
+The plugin includes comprehensive test coverage. Run tests with, changing the target to your architecture:
 
 ```bash
-cargo test
+cargo test --lib --target x86_64-apple-darwin
 ```
 
 ### Test Coverage
@@ -156,7 +152,7 @@ Client: The current time in Tokyo is [result]
 The plugin follows the Extism PDK architecture:
 
 - **lib.rs**: Main plugin implementation with tool and prompt logic
-- **pdk.rs**: PDK-specific types and exported functions for MCP communication
+- **pdk**: PDK-specific types and exported functions for MCP communication
 - **Cargo.toml**: Rust dependencies and build configuration
 
 The plugin compiles to WebAssembly and implements the MCP protocol through Extism's foreign function interface.
