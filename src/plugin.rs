@@ -18,7 +18,7 @@ type PluginHandle = Arc<Mutex<extism::Plugin>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginRequestContext {
-    pub id: String,
+    pub id: NumberOrString,
     #[serde(rename = "_meta")]
     pub meta: Meta,
 }
@@ -26,10 +26,7 @@ struct PluginRequestContext {
 impl<'a> From<&'a RequestContext<RoleServer>> for PluginRequestContext {
     fn from(context: &'a RequestContext<RoleServer>) -> Self {
         PluginRequestContext {
-            id: match &context.id {
-                NumberOrString::Number(n) => n.to_string(),
-                NumberOrString::String(s) => s.to_string(),
-            },
+            id: context.id.clone(),
             meta: context.meta.clone(),
         }
     }

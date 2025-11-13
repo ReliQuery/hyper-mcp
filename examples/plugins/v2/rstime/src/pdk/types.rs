@@ -731,7 +731,21 @@ pub struct PluginRequestContext {
 
     /// Unique identifier for this request
     #[serde(rename = "id")]
-    pub id: String,
+    pub id: PluginRequestId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+#[encoding(Json)]
+#[serde(untagged)]
+pub enum PluginRequestId {
+    String(String),
+    Number(i64),
+}
+
+impl Default for PluginRequestId {
+    fn default() -> Self {
+        PluginRequestId::String(String::new())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
