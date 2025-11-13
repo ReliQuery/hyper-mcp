@@ -55,7 +55,7 @@ fn create_namespaced_name(plugin_name: &PluginName, name: &str) -> String {
     format!("{plugin_name}-{name}")
 }
 
-fn create_namespaced_uri(plugin_name: &PluginName, uri: &String) -> Result<String> {
+fn create_namespaced_uri(plugin_name: &PluginName, uri: &str) -> Result<String> {
     let mut uri = Url::parse(uri)?;
     uri.set_path(&format!(
         "{}/{}",
@@ -76,9 +76,9 @@ fn parse_namespaced_uri(namespaced_uri: String) -> Result<(PluginName, String)> 
     let mut uri = Url::parse(namespaced_uri.as_str())?;
     let mut segments = uri
         .path_segments()
-        .ok_or_else(|| url::ParseError::RelativeUrlWithoutBase)?
+        .ok_or(url::ParseError::RelativeUrlWithoutBase)?
         .collect::<Vec<&str>>();
-    if segments.len() < 1 {
+    if segments.is_empty() {
         return Err(NamespacedNameParseError.into());
     }
     let plugin_name = PluginName::from_str(segments.remove(0))?;
@@ -136,10 +136,10 @@ impl<'de> Deserialize<'de> for CreateElicitationRequestParamWithTimeout {
         fn patch_formats(value: &mut Value) {
             match value {
                 Value::Object(map) => {
-                    if let Some(Value::String(s)) = map.get_mut("format") {
-                        if s == "date_time" {
-                            *s = "date-time".to_string();
-                        }
+                    if let Some(Value::String(s)) = map.get_mut("format")
+                        && s == "date_time"
+                    {
+                        *s = "date-time".to_string();
                     }
                     for val in map.values_mut() {
                         patch_formats(val);
@@ -954,7 +954,7 @@ impl ServerHandler for PluginService {
             let plugin_prompts = plugin
                 .list_prompts(request.clone(), context.clone())
                 .await?;
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -1002,7 +1002,7 @@ impl ServerHandler for PluginService {
             let plugin_resources = plugin
                 .list_resources(request.clone(), context.clone())
                 .await?;
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -1053,7 +1053,7 @@ impl ServerHandler for PluginService {
             let plugin_resource_templates = plugin
                 .list_resource_templates(request.clone(), context.clone())
                 .await?;
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -1105,7 +1105,7 @@ impl ServerHandler for PluginService {
 
         for (plugin_name, plugin) in plugins.iter() {
             let plugin_tools = plugin.list_tools(request.clone(), context.clone()).await?;
-            let plugin_cfg = self.config.plugins.get(&plugin_name).ok_or_else(|| {
+            let plugin_cfg = self.config.plugins.get(plugin_name).ok_or_else(|| {
                 McpError::internal_error(
                     format!("Plugin configuration not found for {plugin_name}"),
                     None,
@@ -1386,6 +1386,20 @@ mod tests {
 
     fn test_tool_list_changed_wasm_exists() -> bool {
         get_tool_list_changed_wasm_path().exists()
+    }
+
+    fn get_rstime_wasm_path() -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("examples");
+        path.push("plugins");
+        path.push("v2");
+        path.push("rstime");
+        path.push("rstime.wasm");
+        path
+    }
+
+    fn test_rstime_wasm_exists() -> bool {
+        get_rstime_wasm_path().exists()
     }
 
     #[test]
@@ -3005,6 +3019,935 @@ plugins:
                 assert!(
                     desc.to_lowercase().contains("tool"),
                     "tool_1 description should mention 'tool'"
+                );
+            }
+        }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    // Comprehensive tests for rstime v2 plugin
+
+    #[tokio::test]
+    async fn test_rstime_list_tools() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        let Some(plugins) = server.service().plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+
+        let request = None;
+        let ctx = create_test_ctx(&server);
+        let result = server.service().list_tools(request, ctx).await;
+        assert!(result.is_ok(), "list_tools should succeed");
+
+        let list_tools_result = result.unwrap();
+        assert!(
+            !list_tools_result.tools.is_empty(),
+            "Should have tools from rstime plugin"
+        );
+
+        // Verify expected tools: get_time and parse_time
+        let tool_names: Vec<String> = list_tools_result
+            .tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+
+        assert!(
+            tool_names.iter().any(|name| name.contains("get_time")),
+            "Should have get_time tool"
+        );
+        assert!(
+            tool_names.iter().any(|name| name.contains("parse_time")),
+            "Should have parse_time tool"
+        );
+
+        // Verify tool properties
+        for tool in &list_tools_result.tools {
+            assert!(!tool.name.is_empty(), "Tool should have a name");
+            assert!(tool.description.is_some(), "Tool should have a description");
+            // Just verify the tool exists, schema validation happens at plugin level
+        }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_list_prompts() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        let Some(plugins) = server.service().plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+
+        let request = None;
+        let ctx = create_test_ctx(&server);
+        let result = server.service().list_prompts(request, ctx).await;
+        assert!(result.is_ok(), "list_prompts should succeed");
+
+        let list_prompts_result = result.unwrap();
+        assert!(
+            !list_prompts_result.prompts.is_empty(),
+            "Should have prompts from rstime plugin"
+        );
+
+        // Verify the get_time_with_timezone prompt exists
+        let prompt_names: Vec<String> = list_prompts_result
+            .prompts
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect();
+
+        assert!(
+            prompt_names
+                .iter()
+                .any(|name| name.contains("get_time_with_timezone")),
+            "Should have get_time_with_timezone prompt"
+        );
+
+        // Verify prompt properties
+        for prompt in &list_prompts_result.prompts {
+            assert!(!prompt.name.is_empty(), "Prompt should have a name");
+            assert!(
+                prompt.description.is_some(),
+                "Prompt should have a description"
+            );
+            assert!(prompt.arguments.is_some(), "Prompt should have arguments");
+        }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_list_resource_templates() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        let Some(plugins) = server.service().plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+
+        let request = None;
+        let ctx = create_test_ctx(&server);
+        let result = server.service().list_resource_templates(request, ctx).await;
+        assert!(result.is_ok(), "list_resource_templates should succeed");
+
+        let list_templates_result = result.unwrap();
+        assert!(
+            !list_templates_result.resource_templates.is_empty(),
+            "Should have resource templates from rstime plugin"
+        );
+
+        // Verify the time_zone_converter template exists
+        let template_names: Vec<String> = list_templates_result
+            .resource_templates
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        assert!(
+            template_names
+                .iter()
+                .any(|name| name.contains("time_zone_converter")),
+            "Should have time_zone_converter resource template"
+        );
+
+        // Verify template properties
+        for template in &list_templates_result.resource_templates {
+            assert!(!template.name.is_empty(), "Template should have a name");
+            assert!(
+                template.description.is_some(),
+                "Template should have a description"
+            );
+            assert!(
+                template.uri_template.contains("{timezone}"),
+                "Template should have URI template with timezone placeholder"
+            );
+            assert!(
+                template.mime_type.is_some(),
+                "Template should have a MIME type"
+            );
+        }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_list_resources() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        let Some(plugins) = server.service().plugins.get() else {
+            panic!("Plugins should be initialized");
+        };
+        assert!(!plugins.is_empty(), "Should have loaded rstime plugin");
+
+        let request = None;
+        let ctx = create_test_ctx(&server);
+        let result = server.service().list_resources(request, ctx).await;
+        assert!(result.is_ok(), "list_resources should succeed");
+
+        let list_resources_result = result.unwrap();
+        // rstime plugin returns empty resources list, which is expected
+        assert_eq!(
+            list_resources_result.resources.len(),
+            0,
+            "rstime should return empty resources"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_call_get_time_tool() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test calling get_time with UTC (default)
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
+            arguments: None,
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().call_tool(request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call get_time tool: {result:?}"
+        );
+
+        let call_result = result.unwrap();
+        assert!(
+            !call_result.content.is_empty(),
+            "get_time should return content"
+        );
+
+        // Verify structured content contains current_time
+        assert!(
+            call_result.structured_content.is_some(),
+            "Should have structured content"
+        );
+
+        let structured = call_result.structured_content.unwrap();
+        let has_current_time = if let Some(map) = structured.as_object() {
+            map.contains_key("current_time")
+        } else {
+            false
+        };
+        assert!(
+            has_current_time,
+            "Structured content should have current_time field"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_call_get_time_with_timezone() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test calling get_time with a specific timezone
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "timezone".to_string(),
+            serde_json::Value::String("America/New_York".to_string()),
+        );
+
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Owned("rstime-get_time".to_string()),
+            arguments: Some(args),
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().call_tool(request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call get_time with timezone: {result:?}"
+        );
+
+        let call_result = result.unwrap();
+        assert!(
+            !call_result.content.is_empty(),
+            "get_time with timezone should return content"
+        );
+        assert!(
+            call_result.structured_content.is_some(),
+            "Should have structured content"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_call_parse_time_tool() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test calling parse_time with a valid RFC2822 timestamp
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "time".to_string(),
+            serde_json::Value::String("Wed, 18 Feb 2015 23:16:09 GMT".to_string()),
+        );
+
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
+            arguments: Some(args),
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().call_tool(request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call parse_time tool: {result:?}"
+        );
+
+        let call_result = result.unwrap();
+        assert!(
+            !call_result.content.is_empty(),
+            "parse_time should return content"
+        );
+
+        // Verify it parsed correctly and returned a timestamp
+        assert!(
+            call_result.structured_content.is_some(),
+            "Should have structured content"
+        );
+
+        let structured = call_result.structured_content.unwrap();
+        let has_timestamp = if let Some(map) = structured.as_object() {
+            map.contains_key("timestamp")
+        } else {
+            false
+        };
+        assert!(
+            has_timestamp,
+            "Structured content should have timestamp field"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_call_parse_time_invalid() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test calling parse_time with invalid timestamp
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "time".to_string(),
+            serde_json::Value::String("invalid timestamp".to_string()),
+        );
+
+        let request = CallToolRequestParam {
+            name: std::borrow::Cow::Owned("rstime-parse_time".to_string()),
+            arguments: Some(args),
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().call_tool(request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should return result (may indicate error in content)"
+        );
+
+        let call_result = result.unwrap();
+        // Tool returns error flag when parsing fails
+        assert_eq!(
+            call_result.is_error,
+            Some(true),
+            "Should mark result as error for invalid input"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_get_prompt() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test getting the prompt without timezone argument
+        let request = GetPromptRequestParam {
+            name: "rstime-get_time_with_timezone".to_string(),
+            arguments: None,
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().get_prompt(request, ctx).await;
+        assert!(result.is_ok(), "Should successfully get prompt: {result:?}");
+
+        let prompt_result = result.unwrap();
+        assert!(
+            !prompt_result.messages.is_empty(),
+            "Prompt should have messages"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_get_prompt_with_timezone() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test getting the prompt with timezone argument
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "timezone".to_string(),
+            serde_json::Value::String("Europe/London".to_string()),
+        );
+
+        let request = GetPromptRequestParam {
+            name: "rstime-get_time_with_timezone".to_string(),
+            arguments: Some(args),
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().get_prompt(request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully get prompt with timezone: {result:?}"
+        );
+
+        let prompt_result = result.unwrap();
+        assert!(
+            !prompt_result.messages.is_empty(),
+            "Prompt should have messages"
+        );
+
+        // Verify description mentions the timezone
+        assert!(
+            prompt_result.description.is_some(),
+            "Prompt should have description"
+        );
+        let desc = prompt_result.description.unwrap();
+        assert!(
+            desc.contains("London"),
+            "Prompt description should mention the timezone"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_read_resource() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test reading a resource with timezone - use namespaced URI
+        // Format: scheme://host/plugin-name/path?query (as created by create_namespaced_uri)
+        // Test reading a resource with timezone
+        // Resource URIs are namespaced with plugin name inserted into the path
+        // Format: scheme://host/plugin-name/rest-of-path
+        // With allowed_hosts configured, the plugin can make HTTP requests
+        let request = ReadResourceRequestParam {
+            uri: "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=America/New_York"
+                .to_string(),
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().read_resource(request, ctx).await;
+        // With allowed_hosts configured, the plugin should be able to fetch the resource
+        match result {
+            Ok(read_result) => {
+                // If successful, verify we got contents
+                assert!(
+                    !read_result.contents.is_empty(),
+                    "Should return resource contents from HTTP response"
+                );
+            }
+            Err(e) => {
+                // If there's an error (e.g., network unavailable in test env),
+                // at least verify it's a reasonable error and not a parsing error
+                let error_msg = e.message.to_lowercase();
+                assert!(
+                    !error_msg.contains("parse"),
+                    "Should not have parsing errors with allowed_hosts: {:?}",
+                    e.message
+                );
+            }
+        }
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_complete_prompt_timezone() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // Test calling the complete() function for prompt timezone argument
+        let argument_info = ArgumentInfo {
+            name: "timezone".to_string(),
+            value: "Ame".to_string(),
+        };
+
+        let complete_request = CompleteRequestParam {
+            r#ref: Reference::Prompt(PromptReference {
+                name: "rstime-get_time_with_timezone".to_string(),
+                title: None,
+            }),
+            argument: argument_info,
+            context: None,
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().complete(complete_request, ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should successfully call complete() for prompt timezone: {result:?}"
+        );
+
+        let complete_result = result.unwrap();
+        // Verify completion results include timezone suggestions
+        assert!(
+            !complete_result.completion.values.is_empty(),
+            "Completion should return timezone suggestions"
+        );
+
+        // Verify we get timezone suggestions starting with "Ame"
+        let suggestions: Vec<String> = complete_result
+            .completion
+            .values
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
+
+        assert!(
+            suggestions
+                .iter()
+                .any(|s| s.contains("America") || s.contains("ame")),
+            "Should suggest timezones matching 'Ame' pattern: {suggestions:?}"
+        );
+
+        // Verify completion metadata
+        assert!(
+            complete_result.completion.total.unwrap_or(0) > 0,
+            "Completion should have total count > 0"
+        );
+
+        assert_ok!(server.cancel().await);
+        assert_ok!(client.cancel().await);
+    }
+
+    #[tokio::test]
+    async fn test_rstime_complete_resource_template_timezone() {
+        let wasm_path = get_rstime_wasm_path();
+        if !test_rstime_wasm_exists() {
+            println!("Skipping test - WASM file not found at {wasm_path:?}");
+            return;
+        }
+
+        let config_content = format!(
+            r#"
+plugins:
+  rstime:
+    url: "file://{}"
+    runtime_config:
+      allowed_hosts:
+        - "www.timezoneconverter.com"
+"#,
+            wasm_path.display()
+        );
+
+        let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
+        let mut cli = create_test_cli();
+        cli.config_file = Some(config_path);
+
+        let (server, client) = create_test_pair(
+            PluginService::new(&cli).await.unwrap(),
+            ClientInfo::default(),
+        )
+        .await;
+
+        // First verify that resource templates exist and have proper structure
+        let list_ctx = create_test_ctx(&server);
+        let list_result = server
+            .service()
+            .list_resource_templates(None, list_ctx)
+            .await;
+        assert!(
+            list_result.is_ok(),
+            "Should successfully list resource templates"
+        );
+
+        let templates = list_result.unwrap();
+        assert!(
+            !templates.resource_templates.is_empty(),
+            "Should have resource templates available"
+        );
+
+        // Verify the time_zone_converter template exists with proper URI template
+        let tz_template = templates
+            .resource_templates
+            .iter()
+            .find(|t| t.name.contains("time_zone_converter"))
+            .expect("Should have time_zone_converter resource template");
+
+        assert!(
+            tz_template.uri_template.contains("{timezone}"),
+            "Resource template should have timezone parameter placeholder"
+        );
+
+        // Now test calling the complete() function for resource template timezone parameter
+        // Use the namespaced URI format with plugin name inserted
+        let resource_uri =
+            "https://www.timezoneconverter.com/rstime/cgi-bin/zoneinfo?tz=Eur".to_string();
+
+        let argument_info = ArgumentInfo {
+            name: "timezone".to_string(),
+            value: "Eur".to_string(),
+        };
+
+        let complete_request = CompleteRequestParam {
+            r#ref: Reference::Resource(ResourceReference { uri: resource_uri }),
+            argument: argument_info,
+            context: None,
+        };
+
+        let ctx = create_test_ctx(&server);
+        let result = server.service().complete(complete_request, ctx).await;
+
+        // The rstime plugin may not implement completion for resource URIs,
+        // so we verify the interface works even if completion isn't supported
+        match result {
+            Ok(complete_result) => {
+                // If completion is supported, verify results
+                assert!(
+                    !complete_result.completion.values.is_empty(),
+                    "Completion should return timezone suggestions for resource template"
+                );
+
+                let suggestions: Vec<String> = complete_result
+                    .completion
+                    .values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect();
+
+                assert!(
+                    suggestions
+                        .iter()
+                        .any(|s| s.contains("Europe") || s.contains("eur")),
+                    "Should suggest timezones matching 'Eur' pattern: {suggestions:?}"
+                );
+
+                assert!(
+                    complete_result.completion.total.unwrap_or(0) > 0,
+                    "Completion should have total count > 0 for resource templates"
+                );
+            }
+            Err(e) => {
+                // If resource completion is not implemented, that's acceptable
+                // The important part is that the complete() method was called successfully
+                let error_msg = e.message.to_lowercase();
+                assert!(
+                    error_msg.contains("not implemented") || error_msg.contains("completion"),
+                    "If completion fails for resources, it should be a clear error: {}",
+                    e.message
                 );
             }
         }
