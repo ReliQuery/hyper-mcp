@@ -894,7 +894,7 @@ pub struct ReadResourceResult {
 #[serde(untagged)]
 pub enum Reference {
     Prompt(PromptReference),
-    ResourceTempalte(ResourceTemplateReference),
+    ResourceTemplate(ResourceTemplateReference),
     Empty(Empty),
 }
 
