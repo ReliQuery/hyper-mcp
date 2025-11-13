@@ -1,6 +1,5 @@
 use crate::config::PluginName;
 use async_trait::async_trait;
-use extism;
 use rmcp::{
     ErrorData as McpError,
     model::*,
@@ -19,7 +18,7 @@ type PluginHandle = Arc<Mutex<extism::Plugin>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginRequestContext {
-    pub id: RequestId,
+    pub id: String,
     #[serde(rename = "_meta")]
     pub meta: Meta,
 }
@@ -27,7 +26,10 @@ struct PluginRequestContext {
 impl<'a> From<&'a RequestContext<RoleServer>> for PluginRequestContext {
     fn from(context: &'a RequestContext<RoleServer>) -> Self {
         PluginRequestContext {
-            id: context.id.clone(),
+            id: match &context.id {
+                NumberOrString::Number(n) => n.to_string(),
+                NumberOrString::String(s) => s.to_string(),
+            },
             meta: context.meta.clone(),
         }
     }
@@ -166,14 +168,14 @@ where
     tokio::select! {
         // Finished normally
         res = &mut join => {
-            return match res {
+            match res {
                 Ok(Ok(result)) => Ok(result),
                 Ok(Err(e)) => Err(e),
                 Err(e) => Err(McpError::internal_error(
                     format!("Failed to spawn blocking task for plugin {plugin_name}: {e}"),
                     None,
                 )),
-            };
+            }
         }
 
         //Cancellation requested
@@ -185,7 +187,7 @@ where
                     None,
                 ));
             }
-            return match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(250), join).await {
                 Ok(Ok(Ok(_))) => Err(McpError::internal_error(
                     format!("Plugin {plugin_name} was cancelled"),
                     None,
@@ -202,7 +204,7 @@ where
                     format!("Timeout waiting for plugin {plugin_name} to cancel"),
                     None,
                 )),
-            };
+            }
         }
     }
 }
@@ -337,14 +339,12 @@ impl Plugin for PluginV2 {
             {
                 let mut value = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
 
-                if let Value::Object(root) = &mut value {
-                    if let Some(Value::Object(ref_obj)) = root.get_mut("ref") {
-                        if let Some(Value::String(t)) = ref_obj.get_mut("type") {
-                            if let Some(stripped) = t.strip_prefix("ref/") {
-                                *t = stripped.to_string();
-                            }
-                        }
-                    }
+                if let Value::Object(root) = &mut value
+                    && let Some(Value::Object(ref_obj)) = root.get_mut("ref")
+                    && let Some(Value::String(t)) = ref_obj.get_mut("type")
+                    && let Some(stripped) = t.strip_prefix("ref/")
+                {
+                    *t = stripped.to_string();
                 }
 
                 value.serialize(serializer)
