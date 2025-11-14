@@ -101,11 +101,11 @@
     "create_elicitation": {
       "description": "Request user input through the client's elicitation interface.\n\nPlugins can use this to ask users for input, decisions, or confirmations. This is useful for interactive plugins that need user guidance during tool execution. Returns the user's response with action and optional form data.",
       "input": {
-        "$ref": "#/components/schemas/CreateElicitationRequestParamWithTimeout",
+        "$ref": "#/components/schemas/ElicitRequestParamWithTimeout",
         "contentType": "application/json"
       },
       "output": {
-        "$ref": "#/components/schemas/CreateElicitationResult",
+        "$ref": "#/components/schemas/ElicitResult",
         "contentType": "application/json"
       }
     },
@@ -382,7 +382,7 @@
         },
         "required": ["values"]
       },
-      "CreateElicitationRequestParamWithTimeout": {
+      "ElicitRequestParamWithTimeout": {
         "description": "Input for the create_elicitation import function",
         "properties": {
           "message": {
@@ -399,11 +399,11 @@
         },
         "required": ["message", "requestedSchema"]
       },
-      "CreateElicitationResult": {
+      "ElicitResult": {
         "description": "Result of an elicitation request",
         "properties": {
           "action": {
-            "$ref": "#/components/schemas/CreateElicitationResultAction"
+            "$ref": "#/components/schemas/ElicitResultAction"
           },
           "content": {
             "type": "object",
@@ -412,7 +412,7 @@
         },
         "required": ["action"]
       },
-      "CreateElicitationResultAction": {
+      "ElicitResultAction": {
         "description": "User's action in response to elicitation",
         "type": "string",
         "enum": ["accept", "decline", "cancel"]
