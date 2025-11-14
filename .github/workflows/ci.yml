@@ -46,10 +46,25 @@ jobs:
       - name: Build hyper-mcp
         run: cargo build
 
+      - name: Set up TinyGo
+        uses: tinygo-org/setup-tinygo@v2
+        with:
+          tinygo-version: "0.37.0"
+
       - name: Build example plugins
         run: |
           for plugin in examples/plugins/v{1,2}/*/; do
             plugin_name=$(basename $plugin)
             echo "Building plugin: $plugin"
-            cargo build --release --target wasm32-wasip1 --manifest-path "examples/plugins/v1/$plugin_name/Cargo.toml"
+            case "$plugin_name" in
+              # --- Go-based plugins ---
+              "crypto-price")
+                current_dir="$PWD"
+                cd $plugin && GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm && cd $current_dir
+                ;;
+              *)
+                # --- Rust-based plugins ---
+                cargo build --release --target wasm32-wasip1 --manifest-path "${plugin}Cargo.toml"
+                ;;
+            esac
           done
