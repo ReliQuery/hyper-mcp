@@ -4,7 +4,7 @@ This directory contains templates for creating plugins for hyper-mcp in various 
 
 ## Available Templates
 
-### Rust
+### 🦀 Rust
 
 The recommended language for building hyper-mcp plugins. Rust provides excellent performance, safety, and tooling for WebAssembly development.
 
@@ -20,7 +20,7 @@ The recommended language for building hyper-mcp plugins. Rust provides excellent
 - Memory-safe execution model
 - Direct support for Extism PDK
 
-### Go
+### 🐹 Go
 
 A modern, approachable language for building hyper-mcp plugins. Go offers simplicity, fast compilation, and a clean standard library for WebAssembly development.
 
