@@ -58,7 +58,7 @@ jobs:
             echo "Building plugin: $plugin"
             case "$plugin_name" in
               # --- Go-based plugins ---
-              "crypto-price")
+              "crypto-price"|"github")
                 current_dir="$PWD"
                 cd $plugin && GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm && cd $current_dir
                 ;;
