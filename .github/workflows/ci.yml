@@ -63,13 +63,12 @@ jobs:
                 # --- Go-based plugins ---
                 GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm
                 ;;
-              "arxiv"|"context7"|"crates-io"|"crypto-price"|"eval-py"|"fetch"|"fs"|"gitlab"|"gomodule"|"hash"|"maven"|"meme-generator"|"myip"|"qdrant"|"qr-code"|"serper"|"think"|"tool-list-changed")
+              "arxiv"|"context7"|"crates-io"|"crypto-price"|"eval-py"|"fetch"|"fs"|"gitlab"|"gomodule"|"hash"|"maven"|"meme-generator"|"myip"|"qdrant"|"qr-code"|"rstime"|"serper"|"think"|"time"|"tool-list-changed")
                 # --- Rust-based plugins ---
                 cargo build --release --target wasm32-wasip1
                 ;;
               *)
                 echo "Skipping: $plugin_name"
-                exit 1
             esac
             cd $current_dir
           done
