@@ -5,7 +5,7 @@ COPY go.mod .
 COPY go.sum .
 RUN go mod download
 COPY . .
-RUN tinygo build -target wasi -o plugin.wasm .
+RUN GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm
 
 FROM scratch
 WORKDIR /
