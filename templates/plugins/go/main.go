@@ -90,3 +90,6 @@ func ReadResource(input ReadResourceRequest) (*ReadResourceResult, error) {
 	// TODO: fill out your implementation here
 	return nil, fmt.Errorf("ReadResource not implemented.")
 }
+
+// Note: leave this in place, as the Go compiler will find the `export` function as the entrypoint.
+func main() {}
