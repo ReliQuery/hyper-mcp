@@ -34,6 +34,8 @@ This template provides a starter project for creating MCP plugins that run as We
 
 2. **Implement plugin handlers** in `main.go`:
 
+Plugin handlers must be implemented without the use of goroutines *unless* you modify the Dockerfile build to remove `-scheduler=none` from the tinygo build flags. Note that this is not recommended, as hyper-mcp will normally handle concurrent executions for you.
+
    > **Note:** You only need to implement the handlers relevant to your plugin. For example, if your plugin only provides tools, implement only `ListTools()` and `CallTool()`. All other handlers have default implementations that work out of the box.
 
    - `ListTools()` - Describe available tools
