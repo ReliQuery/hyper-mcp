@@ -10,12 +10,10 @@ This template provides a starter project for creating MCP plugins that run as We
 
 ```
 .
-├── cmd/
-│   └── plugin/
-│       └── main.go         # Main plugin implementation with WASM exports
-├── pkg/
-│   └── pdk/
-│       └── types.go        # MCP protocol types
+├── main.go                 # Plugin handler implementations
+├── exports.go              # WASM export wrappers for handlers
+├── imports.go              # Host function calls
+├── types.go                # MCP protocol types
 ├── go.mod                  # Go module definition
 ├── go.sum                  # Go module checksums
 ├── Dockerfile              # Multi-stage build for compiling to WASM
@@ -34,7 +32,7 @@ This template provides a starter project for creating MCP plugins that run as We
 
 1. **Clone or use this template** to start your plugin project
 
-2. **Implement plugin handlers** in `cmd/plugin/main.go`:
+2. **Implement plugin handlers** in `main.go`:
 
    > **Note:** You only need to implement the handlers relevant to your plugin. For example, if your plugin only provides tools, implement only `ListTools()` and `CallTool()`. All other handlers have default implementations that work out of the box.
 
@@ -45,6 +43,8 @@ This template provides a starter project for creating MCP plugins that run as We
    - `ListPrompts()` - List available prompts
    - `GetPrompt()` - Get prompt details
    - `Complete()` - Provide auto-completion suggestions
+   - `ListResourceTemplates()` - List resource templates
+   - `OnRootsListChanged()` - Handle root changes
 
 3. **Build locally** (requires Docker for WASM target):
    ```sh
@@ -80,13 +80,13 @@ Your plugin can implement any combination of the following handlers. **Only impl
 If your plugin only provides tools, you only need to implement:
 
 ```go
-func ListTools(input pdk.ListToolsRequest) pdk.ListToolsResult {
-    return pdk.ListToolsResult{
-        Tools: []pdk.Tool{
+func ListTools(input ListToolsRequest) (*ListToolsResult, error) {
+    return &ListToolsResult{
+        Tools: []Tool{
             {
                 Name: "greet",
                 Description: ptrString("Greet a person"),
-                InputSchema: pdk.ToolSchema{
+                InputSchema: ToolSchema{
                     Type: "object",
                     Properties: map[string]interface{}{
                         "name": map[string]interface{}{
@@ -98,31 +98,31 @@ func ListTools(input pdk.ListToolsRequest) pdk.ListToolsResult {
                 },
             },
         },
-    }
+    }, nil
 }
 
-func CallTool(input pdk.CallToolRequest) pdk.CallToolResult {
+func CallTool(input CallToolRequest) (*CallToolResult, error) {
     switch input.Request.Name {
     case "greet":
         name, ok := input.Request.Arguments["name"].(string)
         if !ok {
-            return pdk.CallToolResult{
+            return &CallToolResult{
                 Content: []json.RawMessage{
                     []byte(`{"type":"text","text":"name argument required"}`),
                 },
-            }
+            }, nil
         }
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Hello, %s!"}`, name)),
             },
-        }
+        }, nil
     default:
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Unknown tool: %s"}`, input.Request.Name)),
             },
-        }
+        }, nil
     }
 }
 ```
@@ -131,22 +131,23 @@ All other handlers will use their default implementations.
 
 ## Host Functions
 
-Your plugin can call these host functions to interact with the client and MCP server. Available through the `imports` package:
+Your plugin can call these host functions to interact with the client and MCP server. Available through direct function calls in `imports.go`:
 
 ```go
-import "plugin/pkg/pdk/imports"
+// Example usage
+result, err := CreateElicitation(ElicitRequestParamWithTimeout{...})
 ```
 
 ### User Interaction
 
-**`CreateElicitation(input ElicitRequestParamWithTimeout) (ElicitResult, error)`**
+**`CreateElicitation(input ElicitRequestParamWithTimeout) (*ElicitResult, error)`**
 
 Request user input through the client's elicitation interface. Use this when your plugin needs user guidance, decisions, or confirmations during execution.
 
 ```go
-result, err := imports.CreateElicitation(pdk.ElicitRequestParamWithTimeout{
+result, err := CreateElicitation(ElicitRequestParamWithTimeout{
     Message: "Please provide your name",
-    RequestedSchema: pdk.Schema{
+    RequestedSchema: Schema{
         Type: "object",
         Properties: map[string]json.RawMessage{
             "name": json.RawMessage(`{"type":"string"}`),
@@ -158,12 +159,12 @@ result, err := imports.CreateElicitation(pdk.ElicitRequestParamWithTimeout{
 
 ### Message Generation
 
-**`CreateMessage(input CreateMessageRequestParam) (CreateMessageResult, error)`**
+**`CreateMessage(input CreateMessageRequestParam) (*CreateMessageResult, error)`**
 
 Request message creation through the client's sampling interface. Use this when your plugin needs intelligent text generation or analysis with AI assistance.
 
 ```go
-result, err := imports.CreateMessage(pdk.CreateMessageRequestParam{
+result, err := CreateMessage(CreateMessageRequestParam{
     MaxTokens: 1024,
     Messages: []json.RawMessage{
         // conversation history
@@ -174,12 +175,12 @@ result, err := imports.CreateMessage(pdk.CreateMessageRequestParam{
 
 ### Resource Discovery
 
-**`ListRoots() (ListRootsResult, error)`**
+**`ListRoots() (*ListRootsResult, error)`**
 
 List the client's root directories or resources. Use this to discover what root resources (typically file system roots) are available and understand the scope of resources your plugin can access.
 
 ```go
-roots, err := imports.ListRoots()
+roots, err := ListRoots()
 if err == nil {
     for _, root := range roots.Roots {
         fmt.Printf("Root: %s at %s\n", *root.Name, root.URI)
@@ -194,8 +195,8 @@ if err == nil {
 Send diagnostic, informational, warning, or error messages to the client. The client's logging level determines which messages are processed and displayed.
 
 ```go
-imports.NotifyLoggingMessage(pdk.LoggingMessageNotificationParam{
-    Level: pdk.LoggingLevelInfo,
+NotifyLoggingMessage(LoggingMessageNotificationParam{
+    Level: LoggingLevelInfo,
     Logger: ptrString("my_plugin"),
     Data: json.RawMessage(`{"message": "Processing started"}`),
 })
@@ -208,7 +209,7 @@ imports.NotifyLoggingMessage(pdk.LoggingMessageNotificationParam{
 Report progress during long-running operations. Allows clients to display progress bars or status information to users.
 
 ```go
-imports.NotifyProgress(pdk.ProgressNotificationParam{
+NotifyProgress(ProgressNotificationParam{
     Progress: 50,
     ProgressToken: "task-1",
     Total: ptrFloat64(100),
@@ -233,10 +234,10 @@ Notify the client when your plugin's available items change:
 
 ```go
 // When your plugin's tools change
-imports.NotifyToolListChanged()
+NotifyToolListChanged()
 
 // When a specific resource is updated
-imports.NotifyResourceUpdated(pdk.ResourceUpdatedNotificationParam{
+NotifyResourceUpdated(ResourceUpdatedNotificationParam{
     URI: "resource://my-resource",
 })
 ```
@@ -244,36 +245,36 @@ imports.NotifyResourceUpdated(pdk.ResourceUpdatedNotificationParam{
 ### Example: Interactive Tool with Progress
 
 ```go
-func CallTool(input pdk.CallToolRequest) pdk.CallToolResult {
+func CallTool(input CallToolRequest) (*CallToolResult, error) {
     switch input.Request.Name {
     case "long_task":
         // Log start
-        imports.NotifyLoggingMessage(pdk.LoggingMessageNotificationParam{
-            Level: pdk.LoggingLevelInfo,
+        NotifyLoggingMessage(LoggingMessageNotificationParam{
+            Level: LoggingLevelInfo,
             Data: json.RawMessage(`{"message": "Starting long task"}`),
         })
 
         // Do work with progress updates
         for i := 0; i < 10; i++ {
             // ... do work ...
-            imports.NotifyProgress(pdk.ProgressNotificationParam{
+            NotifyProgress(ProgressNotificationParam{
                 Progress: float64((i + 1) * 10),
                 ProgressToken: "task-1",
                 Total: ptrFloat64(100),
             })
         }
 
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(`{"type":"text","text":"Task completed"}`),
             },
-        }
+        }, nil
     default:
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Unknown tool: %s"}`, input.Request.Name)),
             },
-        }
+        }, nil
     }
 }
 ```
@@ -300,7 +301,7 @@ To build manually without Docker (requires Go 1.22+):
 
 ```sh
 # Build for WASM
-GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o plugin.wasm ./cmd/plugin
+GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o plugin.wasm ./
 
 # Result is at: plugin.wasm
 ```
@@ -312,13 +313,13 @@ GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o plugin.wasm ./cmd/plugin
 Here's an example of implementing a simple tool:
 
 ```go
-func ListTools(input pdk.ListToolsRequest) pdk.ListToolsResult {
-    return pdk.ListToolsResult{
-        Tools: []pdk.Tool{
+func ListTools(input ListToolsRequest) (*ListToolsResult, error) {
+    return &ListToolsResult{
+        Tools: []Tool{
             {
                 Name: "greet",
                 Description: ptrString("Greet a person"),
-                InputSchema: pdk.ToolSchema{
+                InputSchema: ToolSchema{
                     Type: "object",
                     Properties: map[string]interface{}{
                         "name": map[string]interface{}{
@@ -330,31 +331,31 @@ func ListTools(input pdk.ListToolsRequest) pdk.ListToolsResult {
                 },
             },
         },
-    }
+    }, nil
 }
 
-func CallTool(input pdk.CallToolRequest) pdk.CallToolResult {
+func CallTool(input CallToolRequest) (*CallToolResult, error) {
     switch input.Request.Name {
     case "greet":
         name, ok := input.Request.Arguments["name"].(string)
         if !ok {
-            return pdk.CallToolResult{
+            return &CallToolResult{
                 Content: []json.RawMessage{
                     []byte(`{"type":"text","text":"name argument required"}`),
                 },
-            }
+            }, nil
         }
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Hello, %s!"}`, name)),
             },
-        }
+        }, nil
     default:
-        return pdk.CallToolResult{
+        return &CallToolResult{
             Content: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Unknown tool: %s"}`, input.Request.Name)),
             },
-        }
+        }, nil
     }
 }
 ```
@@ -364,9 +365,9 @@ func CallTool(input pdk.CallToolRequest) pdk.CallToolResult {
 Example of implementing a resource:
 
 ```go
-func ListResources(input pdk.ListResourcesRequest) pdk.ListResourcesResult {
-    return pdk.ListResourcesResult{
-        Resources: []pdk.Resource{
+func ListResources(input ListResourcesRequest) (*ListResourcesResult, error) {
+    return &ListResourcesResult{
+        Resources: []Resource{
             {
                 URI: "resource://example",
                 Name: "Example Resource",
@@ -374,23 +375,23 @@ func ListResources(input pdk.ListResourcesRequest) pdk.ListResourcesResult {
                 MimeType: ptrString("text/plain"),
             },
         },
-    }
+    }, nil
 }
 
-func ReadResource(input pdk.ReadResourceRequest) pdk.ReadResourceResult {
+func ReadResource(input ReadResourceRequest) (*ReadResourceResult, error) {
     switch input.Request.URI {
     case "resource://example":
-        return pdk.ReadResourceResult{
+        return &ReadResourceResult{
             Contents: []json.RawMessage{
                 []byte(`{"uri":"resource://example","mimeType":"text/plain","text":"Resource content here"}`),
             },
-        }
+        }, nil
     default:
-        return pdk.ReadResourceResult{
+        return &ReadResourceResult{
             Contents: []json.RawMessage{
                 []byte(fmt.Sprintf(`{"type":"text","text":"Unknown resource: %s"}`, input.Request.URI)),
             },
-        }
+        }, nil
     }
 }
 ```

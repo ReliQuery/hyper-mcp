@@ -1,11 +1,11 @@
-FROM golang:1.23-alpine AS builder
-
-RUN apk add --no-cache git
+FROM tinygo/tinygo:0.39.0 AS builder
 
 WORKDIR /workspace
-COPY . .
+COPY go.mod .
+COPY go.sum .
 RUN go mod download
-RUN GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o plugin.wasm ./cmd/plugin
+COPY . .
+RUN tinygo build -target wasi -o plugin.wasm .
 
 FROM scratch
 WORKDIR /

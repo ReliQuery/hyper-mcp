@@ -1,4 +1,4 @@
-module github.com/example/mcp-plugin
+module github.com/tuananh/hyper-mcp/templates/plugins/go
 
 go 1.25
 

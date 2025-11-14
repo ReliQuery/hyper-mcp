@@ -20,9 +20,25 @@ The recommended language for building hyper-mcp plugins. Rust provides excellent
 - Memory-safe execution model
 - Direct support for Extism PDK
 
+### Go
+
+A modern, approachable language for building hyper-mcp plugins. Go offers simplicity, fast compilation, and a clean standard library for WebAssembly development.
+
+- **Location**: `go/`
+- **Getting Started**: See [go/README.md](./go/README.md)
+- **Use When**: You prefer simplicity, fast development cycles, and Go's syntax
+- **Compile Target**: WebAssembly (`wasip1`)
+
+**Key Features:**
+- Simple, readable syntax with fast learning curve
+- Fast compilation times
+- Excellent standard library
+- Strong concurrency primitives (though limited in WASM)
+- Growing WASM ecosystem with Extism Go PDK support
+
 ## Quick Start
 
-1. **Choose a template language** (currently Rust)
+1. **Choose a template language** (Rust or Go)
 2. **Read the template README** for language-specific setup instructions
 3. **Implement your plugin** by adding tools, resources, prompts, etc.
 4. **Build and test locally** using the provided build instructions
@@ -62,7 +78,7 @@ Plugins can provide any combination of:
 
 ### Set Up Development Environment
 
-Follow the language-specific template README (e.g., [rust/README.md](./rust/README.md)) for:
+Follow the language-specific template README (e.g., [rust/README.md](./rust/README.md) or [go/README.md](./go/README.md)) for:
 - Required tools and dependencies
 - Target/runtime setup
 - Local build instructions
@@ -117,11 +133,24 @@ For local development, use a file:// URL:
 {
   "plugins": {
     "my_plugin": {
-      "url": "file:///path/to/target/wasm32-wasip1/release/plugin.wasm"
+      "url": "file:///path/to/plugin.wasm"
     }
   }
 }
 ```
+
+## Language Comparison
+
+| Feature | Rust | Go |
+|---------|------|-----|
+| Performance | Excellent | Very Good |
+| Code Size | Small | Medium |
+| Learning Curve | Steep | Gentle |
+| Compilation Speed | Moderate | Fast |
+| Type Safety | Very Strong | Good |
+| Standard Library | Moderate | Excellent |
+| WASM Support | Native | Excellent (1.22+) |
+| Extism Support | Full | Full |
 
 ## Resources
 
@@ -129,6 +158,7 @@ For local development, use a file:// URL:
 - [hyper-mcp Plugin Creation Guide](https://github.com/tuananh/hyper-mcp/blob/main/CREATING_PLUGINS.md)
 - [MCP Protocol Specification](https://spec.modelcontextprotocol.io/)
 - [Extism Documentation](https://docs.extism.org/)
+- [Extism Go PDK](https://github.com/extism/go-pdk)
 - [Example Plugins](https://github.com/tuananh/hyper-mcp/tree/main/examples/plugins)
 
 ## Adding More Templates
@@ -136,11 +166,12 @@ For local development, use a file:// URL:
 To add a template for another language:
 
 1. Create a new directory: `templates/plugins/your-language/`
-2. Set up the build system for compiling to `wasm32-wasip1`
+2. Set up the build system for compiling to WebAssembly
 3. Create a `Dockerfile` for building OCI container images
-4. Add a comprehensive `README.md` following the pattern from `rust/README.md`
+4. Add a comprehensive `README.md` following the pattern from existing templates
 5. Include example implementations of key handlers
-6. Submit as a contribution to hyper-mcp
+6. Convert all MCP protocol types from the Rust `types.rs` to your language
+7. Submit as a contribution to hyper-mcp
 
 ## Support
 
