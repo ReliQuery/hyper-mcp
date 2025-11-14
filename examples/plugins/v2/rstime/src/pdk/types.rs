@@ -168,24 +168,6 @@ pub struct CallToolResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
 #[encoding(Json)]
-#[serde(untagged)]
-pub enum ContentBlock {
-    Audio(AudioContent),
-    EmbeddedResource(EmbeddedResource),
-    Image(ImageContent),
-    ResourceLink(ResourceLink),
-    Text(TextContent),
-    Empty(Empty),
-}
-
-impl Default for ContentBlock {
-    fn default() -> Self {
-        ContentBlock::Empty(Empty::default())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
-#[encoding(Json)]
 pub struct CompleteRequest {
     #[serde(rename = "context")]
     pub context: PluginRequestContext,
@@ -253,16 +235,18 @@ pub struct CompleteResultCompletion {
 #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
 #[encoding(Json)]
 #[serde(untagged)]
-pub enum SamplingMessage {
+pub enum ContentBlock {
     Audio(AudioContent),
+    EmbeddedResource(EmbeddedResource),
     Image(ImageContent),
+    ResourceLink(ResourceLink),
     Text(TextContent),
     Empty(Empty),
 }
 
-impl Default for SamplingMessage {
+impl Default for ContentBlock {
     fn default() -> Self {
-        SamplingMessage::Empty(Empty::default())
+        ContentBlock::Empty(Empty::default())
     }
 }
 
@@ -319,8 +303,6 @@ pub enum CreateMessageRequestParamIncludeContext {
     AllServers,
 }
 
-type CreateMessageResultContent = SamplingMessage;
-
 #[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
 #[encoding(Json)]
 pub struct CreateMessageResult {
@@ -341,6 +323,8 @@ pub struct CreateMessageResult {
     #[serde(default)]
     pub stop_reason: Option<String>,
 }
+
+type CreateMessageResultContent = SamplingMessage;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
 #[encoding(Json)]
@@ -539,27 +523,6 @@ pub struct ListPromptsResult {
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
 #[encoding(Json)]
-pub struct ListResourceTemplatesRequest {
-    #[serde(rename = "context")]
-    pub context: PluginRequestContext,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
-#[encoding(Json)]
-pub struct ListResourceTemplatesResult {
-    /// Optional cursor for pagination
-    #[serde(rename = "nextCursor")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-
-    /// Array of resource templates
-    #[serde(rename = "resourceTemplates")]
-    pub resource_templates: Vec<ResourceTemplate>,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
-#[encoding(Json)]
 pub struct ListResourcesRequest {
     #[serde(rename = "context")]
     pub context: PluginRequestContext,
@@ -571,6 +534,21 @@ pub struct ListResourcesResult {
     /// Array of available resources
     #[serde(rename = "resources")]
     pub resources: Vec<Resource>,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+#[encoding(Json)]
+pub struct ListResourceTemplatesRequest {
+    #[serde(rename = "context")]
+    pub context: PluginRequestContext,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+#[encoding(Json)]
+pub struct ListResourceTemplatesResult {
+    /// Array of resource templates
+    #[serde(rename = "resourceTemplates")]
+    pub resource_templates: Vec<ResourceTemplate>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
@@ -1126,6 +1104,22 @@ pub struct Root {
     /// URI of the root (typically file://)
     #[serde(rename = "uri")]
     pub uri: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+#[encoding(Json)]
+#[serde(untagged)]
+pub enum SamplingMessage {
+    Audio(AudioContent),
+    Image(ImageContent),
+    Text(TextContent),
+    Empty(Empty),
+}
+
+impl Default for SamplingMessage {
+    fn default() -> Self {
+        SamplingMessage::Empty(Empty::default())
+    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
