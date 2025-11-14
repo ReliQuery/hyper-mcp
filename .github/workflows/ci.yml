@@ -56,15 +56,20 @@ jobs:
           for plugin in examples/plugins/v{1,2}/*/; do
             plugin_name=$(basename $plugin)
             echo "Building plugin: $plugin"
+            current_dir="$PWD"
+            cd $plugin
             case "$plugin_name" in
               # --- Go-based plugins ---
               "crypto-price"|"github")
-                current_dir="$PWD"
-                cd $plugin && GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm && cd $current_dir
+                GOOS=wasip1 GOARCH=wasm tinygo build -no-debug -panic=trap -scheduler=none -o plugin.wasm
+                ;;
+              "arxiv"|"context7"|"crates-io"|"crypto-price"|"eval-py"|"fetch"|"fs"|"gitlab"|"gomodule"|"hash"|"maven"|"meme-generator"|"myip"|"qdrant"|"qr-code"|"serper"|"think"|"tool-list-changed")
+                # --- Rust-based plugins ---
+                cargo build --release --target wasm32-wasip1
                 ;;
               *)
-                # --- Rust-based plugins ---
-                cargo build --release --target wasm32-wasip1 --manifest-path "${plugin}Cargo.toml"
-                ;;
+                echo "Skipping: $plugin_name"
+                exit 1
             esac
+            cd $current_dir
           done
