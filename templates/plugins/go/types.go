@@ -127,7 +127,7 @@ type CompleteRequest struct {
 // CompleteRequestParam represents parameters for completion
 type CompleteRequestParam struct {
 	Argument CompleteRequestParamArgument `json:"argument"`
-	Context  map[string]string            `json:"context,omitempty"`
+	Context  *CompleteRequestParamContext `json:"context,omitempty"`
 	Ref      Reference                    `json:"ref"`
 }
 
@@ -135,6 +135,11 @@ type CompleteRequestParam struct {
 type CompleteRequestParamArgument struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// CompleteRequestParamContext represents context for completion
+type CompleteRequestParamContext struct {
+	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
 // CompleteResult represents completion suggestions
