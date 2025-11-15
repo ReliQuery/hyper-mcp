@@ -3791,7 +3791,9 @@ plugins:
                 title: None,
             }),
             argument: argument_info,
-            context: None,
+            context: Some(CompletionContext {
+                arguments: Some(HashMap::new()),
+            }),
         };
 
         let ctx = create_test_ctx(&server);
