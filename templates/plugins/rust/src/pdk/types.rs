@@ -185,8 +185,7 @@ pub struct CompleteRequestParam {
     /// Optional completion context with previously-resolved arguments
     #[serde(rename = "context")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub context: Option<HashMap<String, String>>,
+    pub context: Option<CompleteRequestParamContext>,
 
     /// Reference to either a PromptReference or ResourceTemplateReference
     #[serde(rename = "ref")]
@@ -203,6 +202,16 @@ pub struct CompleteRequestParamArgument {
     /// Current value to complete
     #[serde(rename = "value")]
     pub value: String,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
+#[encoding(Json)]
+pub struct CompleteRequestParamContext {
+    /// Previously-resolved argument values
+    #[serde(rename = "arguments")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub arguments: Option<HashMap<String, String>>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, FromBytes, ToBytes)]
