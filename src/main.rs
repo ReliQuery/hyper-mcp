@@ -11,6 +11,7 @@ use tokio::{runtime::Handle, task::block_in_place};
 mod config;
 mod https_auth;
 mod logging;
+mod naming;
 mod oci;
 mod plugin;
 mod service;
@@ -153,7 +154,9 @@ async fn main() -> Result<()> {
 
             let router = axum::Router::new().nest_service("/mcp", service);
 
-            let _ = axum::serve(tokio::net::TcpListener::bind(bind_address).await?, router)
+            let listener = tokio::net::TcpListener::bind(bind_address.clone()).await?;
+
+            let _ = axum::serve(listener, router)
                 .with_graceful_shutdown(async {
                     tokio::signal::ctrl_c().await.unwrap();
                     tracing::info!("Received Ctrl+C, shutting down hyper-mcp server...");
