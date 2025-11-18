@@ -1,6 +1,5 @@
 use crate::{
-    Cli,
-    config::{Config, PluginName, load_config},
+    config::{Config, PluginName},
     https_auth::Authenticator,
     naming::{
         create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
@@ -161,21 +160,9 @@ impl Deref for PluginService {
 }
 
 impl PluginService {
-    pub async fn new(cli: &Cli) -> Result<Self> {
-        // Get default config path in the user's config directory
-        let default_config_path = dirs::config_dir()
-            .map(|mut path| {
-                path.push("hyper-mcp");
-                path.push("config.json");
-                path
-            })
-            .unwrap();
-
-        let config_path = cli.config_file.as_ref().unwrap_or(&default_config_path);
-        tracing::info!("Using config file at {}", config_path.display());
-
+    pub async fn new(config: &Config) -> Result<Self> {
         let inner = Arc::new(PluginServiceInner {
-            config: load_config(config_path).await?,
+            config: config.clone(),
             id: Uuid::new_v4(),
             logging_level: RwLock::new(LoggingLevel::Error),
             names: SetOnce::new(),
@@ -186,7 +173,7 @@ impl PluginService {
         PLUGIN_SERVICE_INNER_REGISTRY.insert(inner.id, Arc::downgrade(&inner));
         let service = Self(inner);
 
-        service.load_plugins(cli).await?;
+        service.load_plugins().await?;
         Ok(service)
     }
 
@@ -200,7 +187,7 @@ impl PluginService {
         None
     }
 
-    async fn load_plugins(&self, cli: &Cli) -> Result<()> {
+    async fn load_plugins(&self) -> Result<()> {
         let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
         let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
         let s3_client: OnceCell<aws_sdk_s3::Client> = OnceCell::new();
@@ -416,7 +403,7 @@ impl PluginService {
                             let local_output_path = local_output_path.to_str().unwrap();
 
                             if let Err(e) = pull_and_extract_oci_image(
-                                cli,
+                                &self.config.oci,
                                 oci_client
                                     .get_or_init(|| async {
                                         oci_client::Client::new(
@@ -1183,7 +1170,7 @@ impl ServerHandler for PluginService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::{cli::Cli, config::load_config};
     use rmcp::{
         ClientHandler,
         model::ClientInfo,
@@ -1248,18 +1235,7 @@ mod tests {
     }
 
     fn create_test_cli() -> Cli {
-        crate::Cli {
-            config_file: None,
-            transport: "stdio".to_string(),
-            bind_address: "127.0.0.1:3001".to_string(),
-            insecure_skip_signature: false,
-            use_sigstore_tuf_data: true,
-            rekor_pub_keys: None,
-            fulcio_certs: None,
-            cert_issuer: None,
-            cert_email: None,
-            cert_url: None,
-        }
+        crate::Cli::default()
     }
 
     fn create_test_ctx(
@@ -1364,8 +1340,9 @@ plugins: {}
         let (_temp_dir, config_path) = create_temp_config_file(config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let result = PluginService::new(&cli).await;
+        let result = PluginService::new(&config).await;
         assert!(
             result.is_ok(),
             "Should create service with empty plugin config"
@@ -1402,8 +1379,9 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let result = PluginService::new(&cli).await;
+        let result = PluginService::new(&config).await;
         assert!(
             result.is_ok(),
             "Should create service with valid WASM plugin"
@@ -1428,8 +1406,9 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let result = PluginService::new(&cli).await;
+        let result = PluginService::new(&config).await;
         assert!(result.is_err(), "Should fail with nonexistent plugin file");
     }
 
@@ -1455,8 +1434,9 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let result = PluginService::new(&cli).await;
+        let result = PluginService::new(&config).await;
         // Should still succeed but log an error about invalid memory limit
         assert!(
             result.is_ok(),
@@ -1468,10 +1448,7 @@ plugins:
 
     #[test]
     fn test_plugin_service_get_info() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let service = create_test_service(config);
 
         let info = rmcp::ServerHandler::get_info(&service);
@@ -1501,9 +1478,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -1619,9 +1597,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -1697,10 +1676,7 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_call_tool_invalid_format() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let (server, client) =
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
@@ -1737,10 +1713,7 @@ plugins:
 
     #[tokio::test]
     async fn test_plugin_service_call_tool_nonexistent_plugin() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let (server, client) =
             create_test_pair(create_test_service(config), ClientInfo::default()).await;
 
@@ -1786,9 +1759,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -1882,9 +1856,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -1924,10 +1899,7 @@ plugins:
 
     #[test]
     fn test_plugin_service_ping() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let service = create_test_service(config);
 
         // Test that the service implements ServerHandler
@@ -1939,10 +1911,7 @@ plugins:
 
     #[test]
     fn test_plugin_service_initialize() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let service = create_test_service(config);
 
         // Test server info
@@ -1953,10 +1922,7 @@ plugins:
 
     #[test]
     fn test_plugin_service_methods_exist() {
-        let config = Config {
-            plugins: HashMap::new(),
-            auths: Some(HashMap::new()),
-        };
+        let config = Config::default();
         let service = create_test_service(config);
 
         // Test that ServerHandler methods exist by calling get_info
@@ -1992,8 +1958,9 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let service = PluginService::new(&cli).await.unwrap();
+        let service = PluginService::new(&config).await.unwrap();
         let Some(plugins) = service.plugins.get() else {
             panic!("Plugins should be initialized");
         };
@@ -2026,9 +1993,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2097,9 +2065,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2160,9 +2129,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2212,9 +2182,13 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let (server, client) =
-            create_test_pair(PluginService::new(&cli).await.unwrap(), TestClient::new()).await;
+        let (server, client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            TestClient::new(),
+        )
+        .await;
         let ctx = create_test_ctx(&server);
 
         // Get initial tool list
@@ -2283,9 +2257,13 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
-        let (server, client) =
-            create_test_pair(PluginService::new(&cli).await.unwrap(), TestClient::new()).await;
+        let (server, client) = create_test_pair(
+            PluginService::new(&config).await.unwrap(),
+            TestClient::new(),
+        )
+        .await;
 
         // Call add_tool three times
         for i in 1..=3 {
@@ -2354,9 +2332,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2411,9 +2390,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2465,9 +2445,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2520,9 +2501,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2573,9 +2555,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2626,9 +2609,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2702,9 +2686,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2781,9 +2766,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2854,9 +2840,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -2928,9 +2915,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3009,9 +2997,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3058,9 +3047,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3125,9 +3115,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3185,9 +3176,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3258,9 +3250,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3316,9 +3309,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3363,9 +3357,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3433,9 +3428,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3501,9 +3497,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;
@@ -3587,9 +3584,10 @@ plugins:
         let (_temp_dir, config_path) = create_temp_config_file(&config_content).await.unwrap();
         let mut cli = create_test_cli();
         cli.config_file = Some(config_path);
+        let config = load_config(&cli).await.unwrap();
 
         let (server, client) = create_test_pair(
-            PluginService::new(&cli).await.unwrap(),
+            PluginService::new(&config).await.unwrap(),
             ClientInfo::default(),
         )
         .await;

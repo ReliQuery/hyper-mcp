@@ -1,4 +1,4 @@
-use crate::Cli;
+use crate::config::OciConfig;
 use anyhow::anyhow;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use flate2::read::GzDecoder;
@@ -49,15 +49,15 @@ fn build_auth(reference: &Reference) -> RegistryAuth {
     }
 }
 
-async fn setup_trust_repository(cli: &Cli) -> Result<Box<dyn TrustRoot>, anyhow::Error> {
-    if cli.use_sigstore_tuf_data {
+async fn setup_trust_repository(config: &OciConfig) -> Result<Box<dyn TrustRoot>, anyhow::Error> {
+    if config.use_sigstore_tuf_data {
         // Use Sigstore TUF data from the official repository
         tracing::info!("Using Sigstore TUF data for verification");
         match SigstoreTrustRoot::new(None).await {
             Ok(repo) => return Ok(Box::new(repo)),
             Err(e) => {
                 tracing::error!("Failed to initialize TUF trust repository: {e}");
-                if !cli.insecure_skip_signature {
+                if !config.insecure_skip_signature {
                     return Err(anyhow!(
                         "Failed to initialize TUF trust repository and signature verification is required"
                     ));
@@ -71,7 +71,7 @@ async fn setup_trust_repository(cli: &Cli) -> Result<Box<dyn TrustRoot>, anyhow:
     let mut data = ManualTrustRoot::default();
 
     // Add Rekor public keys if provided
-    if let Some(rekor_keys_path) = &cli.rekor_pub_keys {
+    if let Some(rekor_keys_path) = &config.rekor_pub_keys {
         if rekor_keys_path.exists() {
             match fs::read(rekor_keys_path) {
                 Ok(content) => {
@@ -89,7 +89,7 @@ async fn setup_trust_repository(cli: &Cli) -> Result<Box<dyn TrustRoot>, anyhow:
     }
 
     // Add Fulcio certificates if provided
-    if let Some(fulcio_certs_path) = &cli.fulcio_certs {
+    if let Some(fulcio_certs_path) = &config.fulcio_certs {
         if fulcio_certs_path.exists() {
             match fs::read(fulcio_certs_path) {
                 Ok(content) => {
@@ -116,11 +116,14 @@ async fn setup_trust_repository(cli: &Cli) -> Result<Box<dyn TrustRoot>, anyhow:
     Ok(Box::new(data))
 }
 
-async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool, anyhow::Error> {
+async fn verify_image_signature(
+    config: &OciConfig,
+    image_reference: &str,
+) -> Result<bool, anyhow::Error> {
     tracing::info!("Verifying signature for {image_reference}");
 
     // Set up the trust repository based on CLI arguments
-    let repo = setup_trust_repository(cli).await?;
+    let repo = setup_trust_repository(config).await?;
     let auth = &Auth::Anonymous;
 
     // Create a client builder
@@ -174,8 +177,8 @@ async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool
     // Build verification constraints based on CLI options
     let mut verification_constraints: VerificationConstraintVec = Vec::new();
 
-    if let Some(cert_email) = &cli.cert_email {
-        let issuer = cli
+    if let Some(cert_email) = &config.cert_email {
+        let issuer = config
             .cert_issuer
             .as_ref()
             .map(|i| StringVerifier::ExactMatch(i.to_string()));
@@ -186,8 +189,8 @@ async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool
         }));
     }
 
-    if let Some(cert_url) = &cli.cert_url {
-        match cli.cert_issuer.as_ref() {
+    if let Some(cert_url) = &config.cert_url {
+        match config.cert_issuer.as_ref() {
             Some(issuer) => {
                 verification_constraints.push(Box::new(CertSubjectUrlVerifier {
                     url: cert_url.to_string(),
@@ -218,7 +221,7 @@ async fn verify_image_signature(cli: &Cli, image_reference: &str) -> Result<bool
 }
 
 pub async fn pull_and_extract_oci_image(
-    cli: &Cli,
+    config: &OciConfig,
     client: &Client,
     image_reference: &str,
     target_file_path: &str,
@@ -237,9 +240,9 @@ pub async fn pull_and_extract_oci_image(
     let auth = build_auth(&reference);
 
     // Verify the image signature if it's an OCI image and verification is enabled
-    if !cli.insecure_skip_signature {
+    if !config.insecure_skip_signature {
         tracing::info!("Signature verification enabled for {image_reference}");
-        match verify_image_signature(cli, image_reference).await {
+        match verify_image_signature(config, image_reference).await {
             Ok(verified) => {
                 if !verified {
                     return Err(format!(
