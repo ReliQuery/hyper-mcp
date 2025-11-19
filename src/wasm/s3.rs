@@ -23,12 +23,12 @@ pub async fn load_wasm(url: &Url) -> Result<Vec<u8>> {
             Ok(body) => Ok(body.to_vec()),
             Err(e) => {
                 tracing::error!("Failed to collect S3 object body: {e}");
-                return Err(anyhow::anyhow!("Failed to collect S3 object body: {e}"));
+                Err(anyhow::anyhow!("Failed to collect S3 object body: {e}"))
             }
         },
         Err(e) => {
             tracing::error!("Failed to get object from S3: {e}");
-            return Err(anyhow::anyhow!("Failed to get object from S3: {e}"));
+            Err(anyhow::anyhow!("Failed to get object from S3: {e}"))
         }
     }
 }
