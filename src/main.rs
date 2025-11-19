@@ -1,13 +1,11 @@
 mod cli;
 mod config;
-mod http;
 mod https_auth;
 mod logging;
 mod naming;
-mod oci;
 mod plugin;
-mod s3;
 mod service;
+mod wasm;
 
 use crate::cli::Cli;
 use anyhow::Result;

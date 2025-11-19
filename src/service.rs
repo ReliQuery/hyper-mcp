@@ -1,10 +1,10 @@
 use crate::{
     config::{Config, PluginName},
-    http,
     naming::{
         create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
     },
     plugin::{Plugin, PluginV1, PluginV2},
+    wasm,
 };
 use anyhow::{Error, Result};
 use bytesize::ByteSize;
@@ -58,7 +58,7 @@ fn check_env_reference(value: &str) -> String {
 
 static PLUGIN_SERVICE_INNER_REGISTRY: LazyLock<DashMap<Uuid, Weak<PluginServiceInner>>> =
     LazyLock::new(DashMap::new);
-static WASM_CONTENT_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
+static WASM_DATA_CACHE: LazyLock<DashMap<PluginName, Vec<u8>>> = LazyLock::new(DashMap::new);
 
 #[allow(dead_code)]
 #[serde_as]
@@ -349,18 +349,20 @@ impl PluginService {
         });
 
         for (plugin_name, plugin_cfg) in &self.config.plugins {
-            let wasm_content = match WASM_CONTENT_CACHE.entry(plugin_name.clone()) {
+            let wasm_data = match WASM_DATA_CACHE.entry(plugin_name.clone()) {
                 Entry::Occupied(entry) => entry.get().clone(),
                 Entry::Vacant(entry) => {
                     let content = match plugin_cfg.url.scheme() {
                         "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
-                        "http" => http::load_wasm(&plugin_cfg.url, &None).await?,
-                        "https" => http::load_wasm(&plugin_cfg.url, &self.config.auths).await?,
+                        "http" => wasm::http::load_wasm(&plugin_cfg.url, &None).await?,
+                        "https" => {
+                            wasm::http::load_wasm(&plugin_cfg.url, &self.config.auths).await?
+                        }
                         "oci" => {
-                            crate::oci::load_wasm(&plugin_cfg.url, &self.config.oci, plugin_name)
+                            wasm::oci::load_wasm(&plugin_cfg.url, &self.config.oci, plugin_name)
                                 .await?
                         }
-                        "s3" => crate::s3::load_wasm(&plugin_cfg.url).await?,
+                        "s3" => wasm::s3::load_wasm(&plugin_cfg.url).await?,
                         unsupported => {
                             tracing::error!("Unsupported plugin URL scheme: {unsupported}");
                             return Err(anyhow::anyhow!(
@@ -372,7 +374,7 @@ impl PluginService {
                     content
                 }
             };
-            let mut manifest = Manifest::new([Wasm::data(wasm_content)]);
+            let mut manifest = Manifest::new([Wasm::data(wasm_data)]);
             if let Some(runtime_cfg) = &plugin_cfg.runtime_config {
                 tracing::info!("runtime_cfg: {runtime_cfg:?}");
                 if let Some(hosts) = &runtime_cfg.allowed_hosts {
