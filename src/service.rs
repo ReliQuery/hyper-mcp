@@ -1,10 +1,9 @@
 use crate::{
     config::{Config, PluginName},
-    https_auth::Authenticator,
+    http,
     naming::{
         create_namespaced_name, create_namespaced_uri, parse_namespaced_name, parse_namespaced_uri,
     },
-    oci::pull_and_extract_oci_image,
     plugin::{Plugin, PluginV1, PluginV2},
 };
 use anyhow::{Error, Result};
@@ -20,7 +19,6 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{DurationSeconds, serde_as};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -29,10 +27,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex, RwLock, Weak},
     time::Duration,
 };
-use tokio::{
-    runtime::Handle,
-    sync::{OnceCell, SetOnce},
-};
+use tokio::{runtime::Handle, sync::SetOnce};
 use uuid::Uuid;
 
 /// Check if a value contains an environment variable reference in the format ${ENVVARKEY}
@@ -188,10 +183,6 @@ impl PluginService {
     }
 
     async fn load_plugins(&self) -> Result<()> {
-        let reqwest_client: OnceCell<reqwest::Client> = OnceCell::new();
-        let oci_client: OnceCell<oci_client::Client> = OnceCell::new();
-        let s3_client: OnceCell<aws_sdk_s3::Client> = OnceCell::new();
-
         let mut names = HashMap::new();
         let mut plugins: HashMap<PluginName, Box<dyn Plugin>> = HashMap::new();
 
@@ -363,99 +354,13 @@ impl PluginService {
                 Entry::Vacant(entry) => {
                     let content = match plugin_cfg.url.scheme() {
                         "file" => tokio::fs::read(plugin_cfg.url.path()).await?,
-                        "http" => reqwest_client
-                            .get_or_init(|| async { reqwest::Client::new() })
-                            .await
-                            .get(plugin_cfg.url.as_str())
-                            .send()
-                            .await?
-                            .bytes()
-                            .await?
-                            .to_vec(),
-                        "https" => reqwest_client
-                            .get_or_init(|| async { reqwest::Client::new() })
-                            .await
-                            .get(plugin_cfg.url.as_str())
-                            .add_auth(&self.config.auths, &plugin_cfg.url)
-                            .send()
-                            .await?
-                            .bytes()
-                            .await?
-                            .to_vec(),
+                        "http" => http::load_wasm(&plugin_cfg.url, &None).await?,
+                        "https" => http::load_wasm(&plugin_cfg.url, &self.config.auths).await?,
                         "oci" => {
-                            let image_reference =
-                                plugin_cfg.url.as_str().strip_prefix("oci://").unwrap();
-                            let target_file_path = "/plugin.wasm";
-                            let mut hasher = Sha256::new();
-                            hasher.update(image_reference);
-                            let hash = hasher.finalize();
-                            let short_hash = &hex::encode(hash)[..7];
-                            let cache_dir = dirs::cache_dir()
-                                .map(|mut path| {
-                                    path.push("hyper-mcp");
-                                    path
-                                })
-                                .unwrap();
-                            std::fs::create_dir_all(&cache_dir)?;
-
-                            let local_output_path =
-                                cache_dir.join(format!("{plugin_name}-{short_hash}.wasm"));
-                            let local_output_path = local_output_path.to_str().unwrap();
-
-                            if let Err(e) = pull_and_extract_oci_image(
-                                &self.config.oci,
-                                oci_client
-                                    .get_or_init(|| async {
-                                        oci_client::Client::new(
-                                            oci_client::client::ClientConfig::default(),
-                                        )
-                                    })
-                                    .await,
-                                image_reference,
-                                target_file_path,
-                                local_output_path,
-                            )
-                            .await
-                            {
-                                tracing::error!("Error pulling oci plugin: {e}");
-                                return Err(anyhow::anyhow!("Failed to pull OCI plugin: {e}"));
-                            }
-                            tracing::info!("cache plugin `{plugin_name}` to : {local_output_path}");
-                            tokio::fs::read(local_output_path).await?
+                            crate::oci::load_wasm(&plugin_cfg.url, &self.config.oci, plugin_name)
+                                .await?
                         }
-                        "s3" => {
-                            let bucket = plugin_cfg.url.host_str().ok_or_else(|| {
-                                anyhow::anyhow!("S3 URL must have a valid bucket name in the host")
-                            })?;
-                            let key = plugin_cfg.url.path().trim_start_matches('/');
-                            match s3_client
-                                .get_or_init(|| async {
-                                    aws_sdk_s3::Client::new(&aws_config::load_from_env().await)
-                                })
-                                .await
-                                .get_object()
-                                .bucket(bucket)
-                                .key(key)
-                                .send()
-                                .await
-                            {
-                                Ok(response) => match response.body.collect().await {
-                                    Ok(body) => body.to_vec(),
-                                    Err(e) => {
-                                        tracing::error!("Failed to collect S3 object body: {e}");
-                                        return Err(anyhow::anyhow!(
-                                            "Failed to collect S3 object body: {e}"
-                                        ));
-                                    }
-                                },
-                                Err(e) => {
-                                    tracing::error!("Failed to get object from S3: {e}");
-                                    return Err(anyhow::anyhow!(
-                                        "Failed to get object from S3: {e}"
-                                    ));
-                                }
-                            }
-                        }
+                        "s3" => crate::s3::load_wasm(&plugin_cfg.url).await?,
                         unsupported => {
                             tracing::error!("Unsupported plugin URL scheme: {unsupported}");
                             return Err(anyhow::anyhow!(
