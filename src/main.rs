@@ -7,7 +7,6 @@ mod plugin;
 mod service;
 mod wasm;
 
-use crate::cli::Cli;
 use anyhow::Result;
 use clap::Parser;
 use rmcp::transport::sse_server::SseServer;
@@ -19,7 +18,7 @@ use tokio::{runtime::Handle, task::block_in_place};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = cli::Cli::parse();
     let config = config::load_config(&cli).await?;
     tracing::info!("Starting hyper-mcp server");
 

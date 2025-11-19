@@ -1142,7 +1142,7 @@ mod tests {
     }
 
     fn create_test_cli() -> Cli {
-        crate::Cli::default()
+        crate::cli::Cli::default()
     }
 
     fn create_test_ctx(
