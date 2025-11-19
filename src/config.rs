@@ -132,27 +132,6 @@ pub struct Config {
     pub oci: OciConfig,
 
     pub plugins: HashMap<PluginName, PluginConfig>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub streamable_http_oauth: Option<OAuthConfig>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct OAuthConfig {
-    pub authorization_servers: Vec<Url>,
-    pub resource: Url,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_name: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_documentation: Option<Url>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_policy_uri: Option<Url>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_tos_uri: Option<Url>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
